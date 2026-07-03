@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.5.11709.299 stable
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BNPPIntegration", "BNPPIntegration.csproj", "{0AC52B5C-0125-4C85-91B0-1FB975E31FF9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0AC52B5C-0125-4C85-91B0-1FB975E31FF9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0AC52B5C-0125-4C85-91B0-1FB975E31FF9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0AC52B5C-0125-4C85-91B0-1FB975E31FF9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0AC52B5C-0125-4C85-91B0-1FB975E31FF9}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {37E36B8E-3879-4846-9366-A798AF4FA6BC}
+	EndGlobalSection
+EndGlobal
