@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.03">
+  <CstmrCdtTrfInitn>
+    <GrpHdr>
+      <MsgId>EPICOR-TEST-20260807175528</MsgId>
+      <CreDtTm>2026-08-07T17:55:28+07:00</CreDtTm>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>1000000</CtrlSum>
+      <InitgPty>
+        <Nm>ABC COMPANY LIMITED</Nm>
+      </InitgPty>
+    </GrpHdr>
+    <PmtInf>
+      <PmtInfId>PMT-20260807175528</PmtInfId>
+      <PmtMtd>TRF</PmtMtd>
+      <BtchBookg>true</BtchBookg>
+      <NbOfTxs>1</NbOfTxs>
+      <CtrlSum>1000000</CtrlSum>
+      <PmtTpInf>
+        <SvcLvl>
+          <Cd>NURG</Cd>
+        </SvcLvl>
+      </PmtTpInf>
+      <ReqdExctnDt>2026-08-08</ReqdExctnDt>
+      <Dbtr>
+        <Nm>ABC COMPANY LIMITED</Nm>
+      </Dbtr>
+      <DbtrAcct>
+        <Id>
+          <Othr>
+            <Id>012345678901</Id>
+          </Othr>
+        </Id>
+        <Ccy>VND</Ccy>
+      </DbtrAcct>
+      <DbtrAgt>
+        <FinInstnId>
+          <BIC>BNPAVNVNXXX</BIC>
+        </FinInstnId>
+      </DbtrAgt>
+      <ChrgBr>SHAR</ChrgBr>
+      <CdtTrfTxInf>
+        <PmtId>
+          <InstrId>INS-20260807175528</InstrId>
+          <EndToEndId>E2E-20260807175528</EndToEndId>
+        </PmtId>
+        <Amt>
+          <InstdAmt Ccy="VND">1000000</InstdAmt>
+        </Amt>
+        <CdtrAgt>
+          <FinInstnId>
+            <BIC>VCBVVNVXXXX</BIC>
+          </FinInstnId>
+        </CdtrAgt>
+        <Cdtr>
+          <Nm>NGUYEN VAN A</Nm>
+        </Cdtr>
+        <CdtrAcct>
+          <Id>
+            <Othr>
+              <Id>1234567890</Id>
+            </Othr>
+          </Id>
+        </CdtrAcct>
+        <RmtInf>
+          <Ustrd>EPICOR BUTTON TEST</Ustrd>
+        </RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>
