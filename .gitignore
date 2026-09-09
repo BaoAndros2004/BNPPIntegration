@@ -8,5 +8,3 @@ obj/
 *.userosscache
 *.sln.docstates
 appsettings.json
-payments Files/
-Keys/

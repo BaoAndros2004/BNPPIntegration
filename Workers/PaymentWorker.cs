@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using BNPPIntegration.BNPP.Payments;
 using BNPPIntegration.BNPP.Payments.Domestic;
@@ -37,11 +38,10 @@ namespace BNPPIntegration.Workers
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var paymentRoot = _configuration["ProcessingStorage:PaymentDirectory"];
-            if (string.IsNullOrWhiteSpace(paymentRoot))
-                throw new InvalidOperationException("ProcessingStorage:PaymentDirectory is required.");
-
-            var paymentDirectory = Path.GetFullPath(paymentRoot);
+            var paymentRoot = _configuration["ProcessingStorage:PaymentDirectory"] ?? "payments";
+            var paymentDirectory = Path.IsPathRooted(paymentRoot)
+                ? paymentRoot
+                : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, paymentRoot));
             var retryIntervalMinutes = _configuration.GetValue<int>("BackgroundProcessing:PaymentRetryIntervalMinutes");
             if (retryIntervalMinutes <= 0)
                 throw new InvalidOperationException("BackgroundProcessing:PaymentRetryIntervalMinutes must be greater than 0.");
@@ -154,7 +154,7 @@ namespace BNPPIntegration.Workers
                 var fileName = Path.GetFileName(file);
                 try
                 {
-                    var content = await File.ReadAllTextAsync(file, stoppingToken);
+                    var content = await ReadFileContentWithRetryAsync(file, stoppingToken);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     
                     var paymentModel = JsonSerializer.Deserialize<PaymentModel>(content, options);
@@ -216,6 +216,25 @@ namespace BNPPIntegration.Workers
                     _logger.LogWarning("File {FileName} was retained for retry.", fileName);
                 }
             }
+        }
+
+        private static async Task<string> ReadFileContentWithRetryAsync(string filePath, CancellationToken cancellationToken, int maxAttempts = 5)
+        {
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    return await reader.ReadToEndAsync(cancellationToken);
+                }
+                catch (IOException) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(200 * attempt, cancellationToken);
+                }
+            }
+
+            return await File.ReadAllTextAsync(filePath, cancellationToken);
         }
     }
 }

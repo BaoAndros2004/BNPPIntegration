@@ -29,25 +29,10 @@ namespace BNPPIntegration.Workers
         }
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var paymentRoot = _configuration["ProcessingStorage:PaymentDirectory"];
-            var paymentDir = !string.IsNullOrWhiteSpace(paymentRoot)
-                ? Path.GetFullPath(paymentRoot)
-                : Path.Combine(AppContext.BaseDirectory, "payments Files");
-
-            var configuredReportDir = _configuration["ProcessingStorage:BankReportDirectory"];
-            string bankReportDirectory;
-            if (string.IsNullOrWhiteSpace(configuredReportDir))
-            {
-                bankReportDirectory = Path.Combine(paymentDir, "bank-reports");
-            }
-            else if (Path.IsPathRooted(configuredReportDir))
-            {
-                bankReportDirectory = configuredReportDir;
-            }
-            else
-            {
-                bankReportDirectory = Path.Combine(paymentDir, configuredReportDir);
-            }
+            var configuredReportDir = _configuration["ProcessingStorage:BankReportDirectory"] ?? "bank-reports";
+            var bankReportDirectory = Path.IsPathRooted(configuredReportDir)
+                ? configuredReportDir
+                : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configuredReportDir));
             var intervalMinutes = _configuration.GetValue<int>("BackgroundProcessing:BankReportIntervalMinutes");
             if (intervalMinutes <= 0)
                 throw new InvalidOperationException("BackgroundProcessing:BankReportIntervalMinutes must be greater than 0.");

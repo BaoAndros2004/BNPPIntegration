@@ -151,6 +151,29 @@ public sealed class PgpEncryptionService
             : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configuredDirectory));
 
         if (!Directory.Exists(keyDirectory))
+        {
+            var currentCandidate = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), configuredDirectory));
+            if (Directory.Exists(currentCandidate))
+            {
+                keyDirectory = currentCandidate;
+            }
+            else
+            {
+                var dir = new DirectoryInfo(AppContext.BaseDirectory);
+                for (var i = 0; i < 4 && dir != null; i++)
+                {
+                    var candidate = Path.Combine(dir.FullName, configuredDirectory);
+                    if (Directory.Exists(candidate))
+                    {
+                        keyDirectory = Path.GetFullPath(candidate);
+                        break;
+                    }
+                    dir = dir.Parent;
+                }
+            }
+        }
+
+        if (!Directory.Exists(keyDirectory))
             throw new DirectoryNotFoundException($"PGP key directory was not found: {keyDirectory}");
 
         var typeToken = $"-{keyType.Trim()}-";

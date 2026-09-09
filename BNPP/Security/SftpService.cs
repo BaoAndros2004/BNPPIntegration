@@ -261,6 +261,14 @@ namespace BNPPIntegration.BNPP.Security
             var currentDir = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
             if (File.Exists(currentDir)) return currentDir;
 
+            var dir = new DirectoryInfo(baseDir);
+            for (var i = 0; i < 4 && dir != null; i++)
+            {
+                var candidate = Path.Combine(dir.FullName, path);
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+                dir = dir.Parent;
+            }
+
             return fullPath;
         }
     }
