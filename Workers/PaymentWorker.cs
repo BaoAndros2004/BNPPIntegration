@@ -1,6 +1,9 @@
 using System.Text.Json;
-using BNPPIntegration.BNPP.Payments.Pain001;
-using BNPPIntegration.BNPP.Payments.Pain001.Models;
+using BNPPIntegration.BNPP.Payments;
+using BNPPIntegration.BNPP.Payments.Domestic;
+using BNPPIntegration.BNPP.Payments.IntraCompany;
+using BNPPIntegration.BNPP.Payments.International;
+using BNPPIntegration.BNPP.Security;
 
 namespace BNPPIntegration.Workers
 {
@@ -8,16 +11,25 @@ namespace BNPPIntegration.Workers
     {
         private readonly ILogger<PaymentWorker> _logger;
         private readonly IConfiguration _configuration;
-        private readonly Pain001Generator _generator;
+        private readonly DomesticGenerator _domesticGenerator;
+        private readonly IntraCompanyGenerator _intraCompanyGenerator;
+        private readonly InternationalGenerator _internationalGenerator;
+        private readonly PgpEncryptionService _pgpEncryptionService;
 
         public PaymentWorker(
             ILogger<PaymentWorker> logger,
             IConfiguration configuration,
-            Pain001Generator generator)
+            DomesticGenerator domesticGenerator,
+            IntraCompanyGenerator intraCompanyGenerator,
+            InternationalGenerator internationalGenerator,
+            PgpEncryptionService pgpEncryptionService)
         {
             _logger = logger;
             _configuration = configuration;
-            _generator = generator;
+            _domesticGenerator = domesticGenerator;
+            _intraCompanyGenerator = intraCompanyGenerator;
+            _internationalGenerator = internationalGenerator;
+            _pgpEncryptionService = pgpEncryptionService;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -140,27 +152,46 @@ namespace BNPPIntegration.Workers
                 try
                 {
                     var content = await File.ReadAllTextAsync(file, stoppingToken);
-                    
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     
-                    var generationRequest = JsonSerializer.Deserialize<Pain001GenerationRequest>(content, options);
-                    if (generationRequest?.Payment != null)
+                    var paymentModel = JsonSerializer.Deserialize<PaymentModel>(content, options);
+                    if (paymentModel != null && !string.IsNullOrWhiteSpace(paymentModel.PaymentType))
                     {
-                        var request = generationRequest.Payment;
-                        var xmlFileName = GetOutputFileName(generationRequest);
+                        var xmlFileName = $"XMLISO_VNHCMHUNGPHAT_{DateTime.Now:ddMMyy_HHmmssfff}.xml";
                         var xmlFilePath = Path.Combine(outputXmlDir, xmlFileName);
 
-                        await _generator.GenerateFileAsync(request, xmlFilePath, stoppingToken);
+                        if (string.Equals(paymentModel.PaymentType, "Domestic", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var request = JsonSerializer.Deserialize<DomesticRequest>(paymentModel.Payment.GetRawText(), options);
+                            await _domesticGenerator.GenerateFileAsync(request!, xmlFilePath, stoppingToken);
+                        }
+                        else if (string.Equals(paymentModel.PaymentType, "IntraCompany", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var request = JsonSerializer.Deserialize<IntraCompanyRequest>(paymentModel.Payment.GetRawText(), options);
+                            await _intraCompanyGenerator.GenerateFileAsync(request!, xmlFilePath, stoppingToken);
+                        }
+                        else if (string.Equals(paymentModel.PaymentType, "International", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var request = JsonSerializer.Deserialize<InternationalRequest>(paymentModel.Payment.GetRawText(), options);
+                            await _internationalGenerator.GenerateFileAsync(request!, xmlFilePath, stoppingToken);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Unknown PaymentType {PaymentType} in {FileName}", paymentModel.PaymentType, fileName);
+                            continue;
+                        }
+
+                        // Encrypt
+                        await _pgpEncryptionService.EncryptAsync(xmlFilePath, stoppingToken);
                             
-                        _logger.LogInformation("Successfully generated XML {XmlFileName} from {FileName}", xmlFileName, fileName);
+                        _logger.LogInformation("Successfully generated and encrypted XML {XmlFileName} from {FileName}", xmlFileName, fileName);
                             
                         // Auto-delete the JSON file after processing
                         File.Delete(file);
                         continue; // process next file
                     }
                     
-                    // If we reach here, either "payment" property was missing or deserialization resulted in null.
-                    _logger.LogWarning("Failed to deserialize JSON in {FileName}; file was retained for retry.", fileName);
+                    _logger.LogWarning("Failed to deserialize JSON or PaymentType missing in {FileName}; file was retained for retry.", fileName);
                 }
                 catch (Exception ex)
                 {
@@ -168,23 +199,6 @@ namespace BNPPIntegration.Workers
                     _logger.LogWarning("File {FileName} was retained for retry.", fileName);
                 }
             }
-        }
-
-        private static string GetOutputFileName(Pain001GenerationRequest request)
-        {
-            var requestedFileName = string.IsNullOrWhiteSpace(request.OutputFileName)
-                ? $"pain001_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..8]}.xml"
-                : request.OutputFileName.Trim();
-            var fileName = Path.GetFileName(requestedFileName);
-
-            if (!fileName.Equals(requestedFileName, StringComparison.Ordinal)
-                || !fileName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException(
-                    "OutputFileName must be a file name ending in .xml and must not contain a directory path.");
-            }
-
-            return fileName;
         }
     }
 }

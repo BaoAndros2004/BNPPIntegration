@@ -1,4 +1,6 @@
 .vs/
+.vscode/
+.github/
 bin/
 obj/
 *.user
@@ -6,4 +8,6 @@ obj/
 *.userosscache
 *.sln.docstates
 appsettings.json
-payments/
+payments Files/
+Keys/
+.vscode/

@@ -2,7 +2,10 @@ using BNPPIntegration.BNPP.BankReports.FSR;
 using BNPPIntegration.BNPP.BankReports.MT940;
 using BNPPIntegration.BNPP.BankReports.MT942;
 using BNPPIntegration.BNPP.BankReports.PSR;
-using BNPPIntegration.BNPP.Payments.Pain001;
+using BNPPIntegration.BNPP.Payments.Domestic;
+using BNPPIntegration.BNPP.Payments.IntraCompany;
+using BNPPIntegration.BNPP.Payments.International;
+using BNPPIntegration.BNPP.Security;
 using BNPPIntegration.Infrastructure;
 using BNPPIntegration.Workers;
 
@@ -24,7 +27,12 @@ builder.Services.AddSingleton<MT940Parser>();
 builder.Services.AddSingleton<MT940Mapper>();
 builder.Services.AddSingleton<MT942Parser>();
 builder.Services.AddSingleton<MT942Mapper>();
-builder.Services.AddSingleton<Pain001Generator>();
+
+builder.Services.AddSingleton<DomesticGenerator>();
+builder.Services.AddSingleton<IntraCompanyGenerator>();
+builder.Services.AddSingleton<InternationalGenerator>();
+builder.Services.AddSingleton<PgpEncryptionService>();
+
 builder.Services.AddHttpClient<WmsApiClient>();
 
 builder.Services.AddHostedService<BankReportWorker>();
