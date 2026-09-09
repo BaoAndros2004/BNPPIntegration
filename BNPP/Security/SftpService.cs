@@ -178,7 +178,10 @@ namespace BNPPIntegration.BNPP.Security
             }
         }
 
-        public async Task<IReadOnlyList<string>> DownloadReportsAsync(string localDirectory, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<string>> DownloadReportsAsync(
+            string localDirectory,
+            string? archiveDirectory = null,
+            CancellationToken cancellationToken = default)
         {
             if (!IsEnabled)
             {
@@ -202,7 +205,9 @@ namespace BNPPIntegration.BNPP.Security
                 }
 
                 var deleteRemote = _configuration.GetValue<bool>("Sftp:DeleteRemoteAfterDownload", false);
-                var archiveDir = Path.Combine(localDirectory, "archive");
+                var archiveDir = !string.IsNullOrWhiteSpace(archiveDirectory)
+                    ? archiveDirectory
+                    : Path.Combine(localDirectory, "archive");
                 Directory.CreateDirectory(archiveDir);
 
                 var files = await Task.Run(() => client.ListDirectory(remoteDir), cancellationToken);

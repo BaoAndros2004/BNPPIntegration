@@ -46,14 +46,20 @@ namespace BNPPIntegration.Workers
             if (retryIntervalMinutes <= 0)
                 throw new InvalidOperationException("BackgroundProcessing:PaymentRetryIntervalMinutes must be greater than 0.");
 
-            var outputXmlDirectory = Path.Combine(paymentDirectory, "Export");
+            var exportRoot = _configuration["ProcessingStorage:ExportDirectory"];
+            var outputXmlDirectory = !string.IsNullOrWhiteSpace(exportRoot)
+                ? (Path.IsPathRooted(exportRoot)
+                    ? exportRoot
+                    : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, exportRoot)))
+                : paymentDirectory;
 
             Directory.CreateDirectory(paymentDirectory);
             Directory.CreateDirectory(outputXmlDirectory);
 
             _logger.LogInformation(
-                "Payment worker started. Storage root: {PaymentDirectory}. Waiting for API queue files.",
-                paymentDirectory);
+                "Payment worker started. Storage root: {PaymentDirectory}, Export root: {OutputXmlDirectory}. Waiting for API queue files.",
+                paymentDirectory,
+                outputXmlDirectory);
 
             using var processingSignal = new SemaphoreSlim(0, 1);
             void SignalProcessing()

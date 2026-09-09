@@ -39,11 +39,20 @@ namespace BNPPIntegration.Workers
 
             var processingInterval = TimeSpan.FromMinutes(intervalMinutes);
             
+            var configuredArchiveDir = _configuration["ProcessingStorage:ArchiveDirectory"];
+            var archiveDirectory = !string.IsNullOrWhiteSpace(configuredArchiveDir)
+                ? (Path.IsPathRooted(configuredArchiveDir)
+                    ? configuredArchiveDir
+                    : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configuredArchiveDir)))
+                : Path.Combine(bankReportDirectory, "archive");
+
             Directory.CreateDirectory(bankReportDirectory);
+            Directory.CreateDirectory(archiveDirectory);
 
             _logger.LogInformation(
-                "Bank report worker started. Input directory: {BankReportDirectory}. Processing interval: {IntervalMinutes} minute(s)",
+                "Bank report worker started. Input directory: {BankReportDirectory}, Archive: {ArchiveDirectory}. Processing interval: {IntervalMinutes} minute(s)",
                 bankReportDirectory,
+                archiveDirectory,
                 intervalMinutes);
 
             // Trì hoãn 30 giây lúc khởi động để chiều IN (PaymentWorker) hoàn tất việc quét và đẩy các thanh toán tồn đọng trước
@@ -52,6 +61,7 @@ namespace BNPPIntegration.Workers
 
             await RunProcessingCycleAsync(
                 bankReportDirectory,
+                archiveDirectory,
                 stoppingToken);
 
             using var timer = new PeriodicTimer(processingInterval);
@@ -59,12 +69,14 @@ namespace BNPPIntegration.Workers
             {
                 await RunProcessingCycleAsync(
                     bankReportDirectory,
+                    archiveDirectory,
                     stoppingToken);
             }
         }
 
         private async Task RunProcessingCycleAsync(
             string bankReportDirectory,
+            string archiveDirectory,
             CancellationToken stoppingToken)
         {
             try
@@ -75,7 +87,7 @@ namespace BNPPIntegration.Workers
                 {
                     try
                     {
-                        await _sftpService.DownloadReportsAsync(bankReportDirectory, stoppingToken);
+                        await _sftpService.DownloadReportsAsync(bankReportDirectory, archiveDirectory, stoppingToken);
                     }
                     catch (Exception sftpEx)
                     {
@@ -83,7 +95,7 @@ namespace BNPPIntegration.Workers
                     }
                 }
 
-                await ProcessFilesAsync(bankReportDirectory, stoppingToken);
+                await ProcessFilesAsync(bankReportDirectory, archiveDirectory, stoppingToken);
                 _logger.LogInformation("Bank report processing cycle completed.");
             }
             catch (Exception ex)
@@ -92,7 +104,7 @@ namespace BNPPIntegration.Workers
             }
         }
 
-        private async Task ProcessFilesAsync(string bankReportDirectory, CancellationToken stoppingToken)
+        private async Task ProcessFilesAsync(string bankReportDirectory, string archiveDirectory, CancellationToken stoppingToken)
         {
             var files = Directory.GetFiles(bankReportDirectory);
             if (files.Length == 0)
@@ -159,9 +171,8 @@ namespace BNPPIntegration.Workers
                     if (success)
                     {
                         _logger.LogInformation("Successfully processed file {FileName}", fileName);
-                        var archiveDir = Path.Combine(bankReportDirectory, "archive");
-                        Directory.CreateDirectory(archiveDir);
-                        var destPath = Path.Combine(archiveDir, fileName);
+                        Directory.CreateDirectory(archiveDirectory);
+                        var destPath = Path.Combine(archiveDirectory, fileName);
                         if (File.Exists(destPath))
                         {
                             File.Delete(destPath);
