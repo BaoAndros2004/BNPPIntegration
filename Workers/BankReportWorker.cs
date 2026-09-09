@@ -27,10 +27,27 @@ namespace BNPPIntegration.Workers
             _scopeFactory = scopeFactory;
             _sftpService = sftpService;
         }
-
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var bankReportDirectory = Path.Combine(AppContext.BaseDirectory, "bank-reports");
+            var paymentRoot = _configuration["ProcessingStorage:PaymentDirectory"];
+            var paymentDir = !string.IsNullOrWhiteSpace(paymentRoot)
+                ? Path.GetFullPath(paymentRoot)
+                : Path.Combine(AppContext.BaseDirectory, "payments Files");
+
+            var configuredReportDir = _configuration["ProcessingStorage:BankReportDirectory"];
+            string bankReportDirectory;
+            if (string.IsNullOrWhiteSpace(configuredReportDir))
+            {
+                bankReportDirectory = Path.Combine(paymentDir, "bank-reports");
+            }
+            else if (Path.IsPathRooted(configuredReportDir))
+            {
+                bankReportDirectory = configuredReportDir;
+            }
+            else
+            {
+                bankReportDirectory = Path.Combine(paymentDir, configuredReportDir);
+            }
             var intervalMinutes = _configuration.GetValue<int>("BackgroundProcessing:BankReportIntervalMinutes");
             if (intervalMinutes <= 0)
                 throw new InvalidOperationException("BackgroundProcessing:BankReportIntervalMinutes must be greater than 0.");
@@ -155,7 +172,14 @@ namespace BNPPIntegration.Workers
                     if (success)
                     {
                         _logger.LogInformation("Successfully processed file {FileName}", fileName);
-                        File.Delete(file);
+                        var archiveDir = Path.Combine(bankReportDirectory, "archive");
+                        Directory.CreateDirectory(archiveDir);
+                        var destPath = Path.Combine(archiveDir, fileName);
+                        if (File.Exists(destPath))
+                        {
+                            File.Delete(destPath);
+                        }
+                        File.Move(file, destPath);
                     }
                     else
                     {

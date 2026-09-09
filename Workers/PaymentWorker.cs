@@ -55,15 +55,6 @@ namespace BNPPIntegration.Workers
                 "Payment worker started. Storage root: {PaymentDirectory}. Waiting for API queue files.",
                 paymentDirectory);
 
-            if (_sftpService.IsEnabled)
-            {
-                _ = Task.Run(async () =>
-                {
-                    _logger.LogInformation("Testing SFTP connection to BNP Paribas on startup...");
-                    await _sftpService.TestConnectionAsync(stoppingToken);
-                }, stoppingToken);
-            }
-
             using var processingSignal = new SemaphoreSlim(0, 1);
             void SignalProcessing()
             {

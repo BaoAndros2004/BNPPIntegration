@@ -15,6 +15,8 @@ namespace BNPPIntegration.BNPP.Security
             _logger = logger;
         }
 
+        private readonly SemaphoreSlim _sftpLock = new(1, 1);
+
         public bool IsEnabled => _configuration.GetValue<bool>("Sftp:Enabled", false);
 
         private ConnectionInfo CreateConnectionInfo()
@@ -46,14 +48,17 @@ namespace BNPPIntegration.BNPP.Security
             var authMethod = new PrivateKeyAuthenticationMethod(username, keyFile);
             return new ConnectionInfo(host, port, username, authMethod)
             {
-                Timeout = TimeSpan.FromSeconds(30)
+                Timeout = TimeSpan.FromSeconds(60)
             };
         }
 
         private SftpClient CreateSftpClient()
         {
             var conn = CreateConnectionInfo();
-            var client = new SftpClient(conn);
+            var client = new SftpClient(conn)
+            {
+                OperationTimeout = TimeSpan.FromSeconds(60)
+            };
             var expectedFingerprint = _configuration["Sftp:ServerFingerprintSha256"];
 
             client.HostKeyReceived += (_, e) =>
@@ -92,6 +97,7 @@ namespace BNPPIntegration.BNPP.Security
                 return false;
             }
 
+            await _sftpLock.WaitAsync(cancellationToken);
             try
             {
                 using var client = CreateSftpClient();
@@ -105,6 +111,10 @@ namespace BNPPIntegration.BNPP.Security
             {
                 _logger.LogError(ex, "SFTP Connection Test Failed!");
                 return false;
+            }
+            finally
+            {
+                _sftpLock.Release();
             }
         }
 
@@ -120,16 +130,24 @@ namespace BNPPIntegration.BNPP.Security
             var fileName = Path.GetFileName(localPgpFilePath);
             var remoteFilePath = $"{remoteDir.TrimEnd('/')}/{fileName}";
 
-            using var client = CreateSftpClient();
+            await _sftpLock.WaitAsync(cancellationToken);
+            try
+            {
+                using var client = CreateSftpClient();
 
-            _logger.LogInformation("Connecting to SFTP {Host}:{Port} to upload {FileName}...", client.ConnectionInfo.Host, client.ConnectionInfo.Port, fileName);
-            await Task.Run(() => client.Connect(), cancellationToken);
+                _logger.LogInformation("Connecting to SFTP {Host}:{Port} to upload {FileName}...", client.ConnectionInfo.Host, client.ConnectionInfo.Port, fileName);
+                await Task.Run(() => client.Connect(), cancellationToken);
 
-            await using var stream = File.OpenRead(localPgpFilePath);
-            await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
+                await using var stream = File.OpenRead(localPgpFilePath);
+                await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
 
-            client.Disconnect();
-            _logger.LogInformation("Successfully uploaded {FileName} to BNP SFTP at {RemotePath}", fileName, remoteFilePath);
+                client.Disconnect();
+                _logger.LogInformation("Successfully uploaded {FileName} to BNP SFTP at {RemotePath}", fileName, remoteFilePath);
+            }
+            finally
+            {
+                _sftpLock.Release();
+            }
         }
 
         public async Task<IReadOnlyList<string>> DownloadReportsAsync(string localDirectory, CancellationToken cancellationToken = default)
@@ -143,45 +161,67 @@ namespace BNPPIntegration.BNPP.Security
             Directory.CreateDirectory(localDirectory);
             var downloadedFiles = new List<string>();
 
-            using var client = CreateSftpClient();
-
-            await Task.Run(() => client.Connect(), cancellationToken);
-
-            if (!client.Exists(remoteDir))
+            await _sftpLock.WaitAsync(cancellationToken);
+            try
             {
-                _logger.LogWarning("Remote directory {RemoteDir} does not exist on SFTP server.", remoteDir);
+                using var client = CreateSftpClient();
+
+                await Task.Run(() => client.Connect(), cancellationToken);
+
+                if (!client.Exists(remoteDir))
+                {
+                    _logger.LogWarning("Remote directory {RemoteDir} does not exist on SFTP server.", remoteDir);
+                    client.Disconnect();
+                    return downloadedFiles;
+                }
+
+                var deleteRemote = _configuration.GetValue<bool>("Sftp:DeleteRemoteAfterDownload", false);
+                var archiveDir = Path.Combine(localDirectory, "archive");
+                Directory.CreateDirectory(archiveDir);
+
+                var files = await Task.Run(() => client.ListDirectory(remoteDir), cancellationToken);
+                foreach (var file in files)
+                {
+                    if (file.IsDirectory || file.Name.StartsWith('.'))
+                        continue;
+
+                    var localFilePath = Path.Combine(localDirectory, file.Name);
+                    var archivedFilePath = Path.Combine(archiveDir, file.Name);
+
+                    // Skip if file is already downloaded or already processed into archive
+                    if (File.Exists(localFilePath) || File.Exists(archivedFilePath))
+                    {
+                        continue;
+                    }
+
+                    await using (var stream = File.Create(localFilePath))
+                    {
+                        await Task.Run(() => client.DownloadFile(file.FullName, stream), cancellationToken);
+                    }
+
+                    if (deleteRemote)
+                    {
+                        try
+                        {
+                            await Task.Run(() => client.DeleteFile(file.FullName), cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Downloaded {FileName} but could not delete it from remote server.", file.Name);
+                        }
+                    }
+
+                    downloadedFiles.Add(localFilePath);
+                    _logger.LogInformation("Successfully downloaded bank report: {FileName}", file.Name);
+                }
+
                 client.Disconnect();
                 return downloadedFiles;
             }
-
-            var files = await Task.Run(() => client.ListDirectory(remoteDir), cancellationToken);
-            foreach (var file in files)
+            finally
             {
-                if (file.IsDirectory || file.Name.StartsWith('.'))
-                    continue;
-
-                var localFilePath = Path.Combine(localDirectory, file.Name);
-                await using (var stream = File.Create(localFilePath))
-                {
-                    await Task.Run(() => client.DownloadFile(file.FullName, stream), cancellationToken);
-                }
-
-                // Xóa file trên SFTP server sau khi đã tải thành công về local
-                try
-                {
-                    await Task.Run(() => client.DeleteFile(file.FullName), cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Downloaded {FileName} but could not delete it from remote server.", file.Name);
-                }
-
-                downloadedFiles.Add(localFilePath);
-                _logger.LogInformation("Successfully downloaded bank report: {FileName}", file.Name);
+                _sftpLock.Release();
             }
-
-            client.Disconnect();
-            return downloadedFiles;
         }
 
         private string GetRequiredSetting(string key)
