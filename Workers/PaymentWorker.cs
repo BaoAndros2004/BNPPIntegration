@@ -15,6 +15,7 @@ namespace BNPPIntegration.Workers
         private readonly IntraCompanyGenerator _intraCompanyGenerator;
         private readonly InternationalGenerator _internationalGenerator;
         private readonly PgpEncryptionService _pgpEncryptionService;
+        private readonly SftpService _sftpService;
 
         public PaymentWorker(
             ILogger<PaymentWorker> logger,
@@ -22,7 +23,8 @@ namespace BNPPIntegration.Workers
             DomesticGenerator domesticGenerator,
             IntraCompanyGenerator intraCompanyGenerator,
             InternationalGenerator internationalGenerator,
-            PgpEncryptionService pgpEncryptionService)
+            PgpEncryptionService pgpEncryptionService,
+            SftpService sftpService)
         {
             _logger = logger;
             _configuration = configuration;
@@ -30,6 +32,7 @@ namespace BNPPIntegration.Workers
             _intraCompanyGenerator = intraCompanyGenerator;
             _internationalGenerator = internationalGenerator;
             _pgpEncryptionService = pgpEncryptionService;
+            _sftpService = sftpService;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -51,6 +54,15 @@ namespace BNPPIntegration.Workers
             _logger.LogInformation(
                 "Payment worker started. Storage root: {PaymentDirectory}. Waiting for API queue files.",
                 paymentDirectory);
+
+            if (_sftpService.IsEnabled)
+            {
+                _ = Task.Run(async () =>
+                {
+                    _logger.LogInformation("Testing SFTP connection to BNP Paribas on startup...");
+                    await _sftpService.TestConnectionAsync(stoppingToken);
+                }, stoppingToken);
+            }
 
             using var processingSignal = new SemaphoreSlim(0, 1);
             void SignalProcessing()
@@ -182,10 +194,24 @@ namespace BNPPIntegration.Workers
                         }
 
                         // Encrypt
-                        await _pgpEncryptionService.EncryptAsync(xmlFilePath, stoppingToken);
+                        var pgpFilePath = await _pgpEncryptionService.EncryptAsync(xmlFilePath, stoppingToken);
                             
                         _logger.LogInformation("Successfully generated and encrypted XML {XmlFileName} from {FileName}", xmlFileName, fileName);
                             
+                        // Tự động đẩy qua SFTP nếu cấu hình Sftp:Enabled = true
+                        if (_sftpService.IsEnabled)
+                        {
+                            try
+                            {
+                                await _sftpService.UploadPaymentFileAsync(pgpFilePath, stoppingToken);
+                            }
+                            catch (Exception sftpEx)
+                            {
+                                _logger.LogError(sftpEx, "Failed to upload {PgpFileName} to BNP SFTP. File will be retained for retry.", Path.GetFileName(pgpFilePath));
+                                throw; // Ném exception để giữ file JSON retry lại sau
+                            }
+                        }
+
                         // Auto-delete the JSON file after processing
                         File.Delete(file);
                         continue; // process next file

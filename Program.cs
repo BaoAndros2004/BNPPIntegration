@@ -32,6 +32,7 @@ builder.Services.AddSingleton<DomesticGenerator>();
 builder.Services.AddSingleton<IntraCompanyGenerator>();
 builder.Services.AddSingleton<InternationalGenerator>();
 builder.Services.AddSingleton<PgpEncryptionService>();
+builder.Services.AddSingleton<SftpService>();
 
 builder.Services.AddHttpClient<WmsApiClient>();
 

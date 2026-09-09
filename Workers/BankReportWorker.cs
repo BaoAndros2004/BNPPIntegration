@@ -2,6 +2,7 @@ using BNPPIntegration.BNPP.BankReports.FSR;
 using BNPPIntegration.BNPP.BankReports.MT940;
 using BNPPIntegration.BNPP.BankReports.MT942;
 using BNPPIntegration.BNPP.BankReports.PSR;
+using BNPPIntegration.BNPP.Security;
 using BNPPIntegration.Infrastructure;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -13,15 +14,18 @@ namespace BNPPIntegration.Workers
         private readonly ILogger<BankReportWorker> _logger;
         private readonly IConfiguration _configuration;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly SftpService _sftpService;
 
         public BankReportWorker(
             ILogger<BankReportWorker> logger,
             IConfiguration configuration,
-            IServiceScopeFactory scopeFactory)
+            IServiceScopeFactory scopeFactory,
+            SftpService sftpService)
         {
             _logger = logger;
             _configuration = configuration;
             _scopeFactory = scopeFactory;
+            _sftpService = sftpService;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -62,6 +66,19 @@ namespace BNPPIntegration.Workers
             try
             {
                 _logger.LogInformation("Bank report processing cycle started.");
+
+                if (_sftpService.IsEnabled)
+                {
+                    try
+                    {
+                        await _sftpService.DownloadReportsAsync(bankReportDirectory, stoppingToken);
+                    }
+                    catch (Exception sftpEx)
+                    {
+                        _logger.LogError(sftpEx, "Error downloading reports from BNP SFTP server.");
+                    }
+                }
+
                 await ProcessFilesAsync(bankReportDirectory, stoppingToken);
                 _logger.LogInformation("Bank report processing cycle completed.");
             }
