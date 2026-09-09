@@ -135,8 +135,8 @@ namespace BNPPIntegration.BNPP.Security
             {
                 using var client = CreateSftpClient();
 
-                _logger.LogInformation("Connecting to SFTP {Host}:{Port} to upload {FileName}...", client.ConnectionInfo.Host, client.ConnectionInfo.Port, fileName);
                 await Task.Run(() => client.Connect(), cancellationToken);
+                _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
 
                 await using var stream = File.OpenRead(localPgpFilePath);
                 await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
@@ -167,6 +167,7 @@ namespace BNPPIntegration.BNPP.Security
                 using var client = CreateSftpClient();
 
                 await Task.Run(() => client.Connect(), cancellationToken);
+                _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
 
                 if (!client.Exists(remoteDir))
                 {
