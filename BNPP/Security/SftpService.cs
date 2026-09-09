@@ -85,28 +85,40 @@ namespace BNPPIntegration.BNPP.Security
             return client;
         }
 
-        private async Task ConnectWithRetryAsync(SftpClient client, CancellationToken cancellationToken, int maxAttempts = 3)
+        private async Task<SftpClient> CreateAndConnectClientAsync(CancellationToken cancellationToken, int maxAttempts = 3)
         {
             for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
+                var client = CreateSftpClient();
                 try
                 {
                     await Task.Run(() => client.Connect(), cancellationToken);
                     _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
-                    return;
+                    return client;
                 }
-                catch (Exception ex) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+                catch (Exception ex)
                 {
-                    _logger.LogWarning("SFTP connect attempt {Attempt}/{MaxAttempts} failed: {Message}. Waiting {Delay}s for server session release...", attempt, maxAttempts, ex.Message, attempt * 5);
                     try
                     {
                         if (client.IsConnected)
                             client.Disconnect();
+                        client.Dispose();
                     }
                     catch { }
-                    await Task.Delay(TimeSpan.FromSeconds(attempt * 5), cancellationToken);
+
+                    if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
+                    {
+                        _logger.LogError(ex, "SFTP connection failed after {Attempt} attempt(s): {Message}", attempt, ex.Message);
+                        throw;
+                    }
+
+                    var backoffSeconds = attempt * 5;
+                    _logger.LogWarning("SFTP connect attempt {Attempt}/{MaxAttempts} failed: {Message}. Waiting {Delay}s for session release before reconnecting...", attempt, maxAttempts, ex.Message, backoffSeconds);
+                    await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), cancellationToken);
                 }
             }
+
+            throw new InvalidOperationException("Failed to establish SFTP connection.");
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -120,8 +132,7 @@ namespace BNPPIntegration.BNPP.Security
             await _sftpLock.WaitAsync(cancellationToken);
             try
             {
-                using var client = CreateSftpClient();
-                await ConnectWithRetryAsync(client, cancellationToken);
+                using var client = await CreateAndConnectClientAsync(cancellationToken);
                 var connected = client.IsConnected;
                 client.Disconnect();
                 _logger.LogInformation("SFTP Connection Test Succeeded! Host: {Host}:{Port}", client.ConnectionInfo.Host, client.ConnectionInfo.Port);
@@ -153,9 +164,7 @@ namespace BNPPIntegration.BNPP.Security
             await _sftpLock.WaitAsync(cancellationToken);
             try
             {
-                using var client = CreateSftpClient();
-
-                await ConnectWithRetryAsync(client, cancellationToken);
+                using var client = await CreateAndConnectClientAsync(cancellationToken);
 
                 await using var stream = File.OpenRead(localPgpFilePath);
                 await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
@@ -183,9 +192,7 @@ namespace BNPPIntegration.BNPP.Security
             await _sftpLock.WaitAsync(cancellationToken);
             try
             {
-                using var client = CreateSftpClient();
-
-                await ConnectWithRetryAsync(client, cancellationToken);
+                using var client = await CreateAndConnectClientAsync(cancellationToken);
 
                 if (!client.Exists(remoteDir))
                 {
