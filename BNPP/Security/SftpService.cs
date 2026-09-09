@@ -149,33 +149,48 @@ namespace BNPPIntegration.BNPP.Security
             }
         }
 
-        public async Task UploadPaymentFileAsync(string localPgpFilePath, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<string>> UploadPaymentFilesBatchAsync(IEnumerable<string> localPgpFilePaths, CancellationToken cancellationToken = default)
         {
-            if (!IsEnabled)
+            var uploaded = new List<string>();
+            var fileList = localPgpFilePaths.Where(File.Exists).ToList();
+            if (fileList.Count == 0 || !IsEnabled)
             {
-                _logger.LogInformation("SFTP is disabled; skipping upload for {FilePath}", localPgpFilePath);
-                return;
+                return uploaded;
             }
 
             var remoteDir = _configuration["Sftp:RemoteIncomingPath"] ?? "/in";
-            var fileName = Path.GetFileName(localPgpFilePath);
-            var remoteFilePath = $"{remoteDir.TrimEnd('/')}/{fileName}";
 
             await _sftpLock.WaitAsync(cancellationToken);
             try
             {
                 using var client = await CreateAndConnectClientAsync(cancellationToken);
 
-                await using var stream = File.OpenRead(localPgpFilePath);
-                await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
+                foreach (var localPgpFilePath in fileList)
+                {
+                    var fileName = Path.GetFileName(localPgpFilePath);
+                    var remoteFilePath = $"{remoteDir.TrimEnd('/')}/{fileName}";
+
+                    await using (var stream = File.OpenRead(localPgpFilePath))
+                    {
+                        await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
+                    }
+
+                    uploaded.Add(localPgpFilePath);
+                    _logger.LogInformation("Successfully uploaded {FileName} to BNP SFTP at {RemotePath}", fileName, remoteFilePath);
+                }
 
                 client.Disconnect();
-                _logger.LogInformation("Successfully uploaded {FileName} to BNP SFTP at {RemotePath}", fileName, remoteFilePath);
+                return uploaded;
             }
             finally
             {
                 _sftpLock.Release();
             }
+        }
+
+        public async Task UploadPaymentFileAsync(string localPgpFilePath, CancellationToken cancellationToken = default)
+        {
+            await UploadPaymentFilesBatchAsync(new[] { localPgpFilePath }, cancellationToken);
         }
 
         public async Task<IReadOnlyList<string>> DownloadReportsAsync(
@@ -211,11 +226,11 @@ namespace BNPPIntegration.BNPP.Security
                 Directory.CreateDirectory(archiveDir);
 
                 var files = await Task.Run(() => client.ListDirectory(remoteDir), cancellationToken);
-                foreach (var file in files)
-                {
-                    if (file.IsDirectory || file.Name.StartsWith('.'))
-                        continue;
+                var remoteFiles = files.Where(f => !f.IsDirectory && !f.Name.StartsWith('.')).ToList();
+                _logger.LogInformation("Found {Total} file(s) in remote {RemoteDir}. Downloading all to local in batch...", remoteFiles.Count, remoteDir);
 
+                foreach (var file in remoteFiles)
+                {
                     var localFilePath = Path.Combine(localDirectory, file.Name);
                     var archivedFilePath = Path.Combine(archiveDir, file.Name);
 
@@ -247,6 +262,7 @@ namespace BNPPIntegration.BNPP.Security
                 }
 
                 client.Disconnect();
+                _logger.LogInformation("Batch download completed. Downloaded {Count} new file(s) from BNP SFTP.", downloadedFiles.Count);
                 return downloadedFiles;
             }
             finally

@@ -155,6 +155,11 @@ namespace BNPPIntegration.Workers
             if (files.Length == 0)
                 return;
 
+            var processedBatch = new List<(string JsonFilePath, string PgpFilePath)>();
+
+            // -------------------------------------------------------------
+            // Phase 1: Batch XML Generation & PGP Encryption
+            // -------------------------------------------------------------
             foreach (var file in files)
             {
                 var fileName = Path.GetFileName(file);
@@ -194,32 +199,77 @@ namespace BNPPIntegration.Workers
                         var pgpFilePath = await _pgpEncryptionService.EncryptAsync(xmlFilePath, stoppingToken);
                             
                         _logger.LogInformation("Successfully generated and encrypted XML {XmlFileName} from {FileName}", xmlFileName, fileName);
-                            
-                        // Tự động đẩy qua SFTP nếu cấu hình Sftp:Enabled = true
-                        if (_sftpService.IsEnabled)
-                        {
-                            try
-                            {
-                                await _sftpService.UploadPaymentFileAsync(pgpFilePath, stoppingToken);
-                            }
-                            catch (Exception sftpEx)
-                            {
-                                _logger.LogError(sftpEx, "Failed to upload {PgpFileName} to BNP SFTP. File will be retained for retry.", Path.GetFileName(pgpFilePath));
-                                throw; // Ném exception để giữ file JSON retry lại sau
-                            }
-                        }
+                        processedBatch.Add((file, pgpFilePath));
 
-                        // Auto-delete the JSON file after processing
-                        File.Delete(file);
-                        continue; // process next file
+                        // Ensure distinct millisecond timestamps for consecutive files
+                        await Task.Delay(15, stoppingToken);
+                        continue;
                     }
                     
                     _logger.LogWarning("Failed to deserialize JSON or PaymentType missing in {FileName}; file was retained for retry.", fileName);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing payment file {FileName}", fileName);
+                    _logger.LogError(ex, "Error generating payment file {FileName}", fileName);
                     _logger.LogWarning("File {FileName} was retained for retry.", fileName);
+                }
+            }
+
+            if (processedBatch.Count == 0)
+                return;
+
+            // -------------------------------------------------------------
+            // Phase 2: Batch SFTP Upload (Single Connection Session)
+            // -------------------------------------------------------------
+            if (_sftpService.IsEnabled)
+            {
+                try
+                {
+                    _logger.LogInformation("Uploading batch of {Count} payment file(s) to BNP SFTP in a single session...", processedBatch.Count);
+                    var uploadedPgpPaths = await _sftpService.UploadPaymentFilesBatchAsync(
+                        processedBatch.Select(x => x.PgpFilePath),
+                        stoppingToken);
+
+                    var uploadedSet = new HashSet<string>(uploadedPgpPaths, StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var item in processedBatch)
+                    {
+                        if (uploadedSet.Contains(item.PgpFilePath))
+                        {
+                            try
+                            {
+                                File.Delete(item.JsonFilePath);
+                                _logger.LogInformation("Cleaned up source queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                            }
+                            catch (Exception delEx)
+                            {
+                                _logger.LogWarning(delEx, "Failed to delete processed queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                            }
+                        }
+                        else
+                        {
+                            _logger.LogWarning("File {FileName} was not uploaded; retaining JSON for retry.", Path.GetFileName(item.JsonFilePath));
+                        }
+                    }
+                }
+                catch (Exception sftpEx)
+                {
+                    _logger.LogError(sftpEx, "Batch SFTP upload failed. Source JSON files will be retained for retry.");
+                }
+            }
+            else
+            {
+                // SFTP disabled: all generated files are kept, source JSON files can be cleaned up
+                foreach (var item in processedBatch)
+                {
+                    try
+                    {
+                        File.Delete(item.JsonFilePath);
+                    }
+                    catch (Exception delEx)
+                    {
+                        _logger.LogWarning(delEx, "Failed to delete queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                    }
                 }
             }
         }

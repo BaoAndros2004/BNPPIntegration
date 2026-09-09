@@ -110,6 +110,8 @@ namespace BNPPIntegration.Workers
             if (files.Length == 0)
                 return;
 
+            _logger.LogInformation("All files downloaded. Starting batch parsing and UD26 save for {Count} report file(s)...", files.Length);
+
             using var scope = _scopeFactory.CreateScope();
             var wmsApiClient = scope.ServiceProvider.GetRequiredService<WmsApiClient>();
             var fsrParser = scope.ServiceProvider.GetRequiredService<FSRParser>();
