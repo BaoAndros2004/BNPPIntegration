@@ -110,6 +110,11 @@ namespace BNPPIntegration.Workers
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     await processingSignal.WaitAsync(stoppingToken);
+
+                    // Debounce: wait 500ms to allow all simultaneous files from Epicor to settle
+                    await Task.Delay(500, stoppingToken);
+                    while (processingSignal.Wait(0)) { } // Drain any duplicate signals
+
                     await RunProcessingCycleAsync(
                         paymentDirectory,
                         outputXmlDirectory,
@@ -136,16 +141,14 @@ namespace BNPPIntegration.Workers
         {
             try
             {
-                _logger.LogInformation("Payment processing cycle started.");
                 await ProcessPaymentFilesAsync(
                     paymentDirectory,
                     outputXmlDirectory,
                     stoppingToken);
-                _logger.LogInformation("Payment processing cycle completed.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred while processing payment files.");
+                _logger.LogError(ex, "[PAYMENT] An error occurred while processing payment files.");
             }
         }
 
@@ -155,13 +158,16 @@ namespace BNPPIntegration.Workers
             if (files.Length == 0)
                 return;
 
+            _logger.LogInformation("[PAYMENT] Detected {Count} pending payment file(s) in queue. Starting batch generation...", files.Length);
+
             var processedBatch = new List<(string JsonFilePath, string PgpFilePath)>();
 
             // -------------------------------------------------------------
             // Phase 1: Batch XML Generation & PGP Encryption
             // -------------------------------------------------------------
-            foreach (var file in files)
+            for (var i = 0; i < files.Length; i++)
             {
+                var file = files[i];
                 var fileName = Path.GetFileName(file);
                 try
                 {
@@ -191,32 +197,35 @@ namespace BNPPIntegration.Workers
                         }
                         else
                         {
-                            _logger.LogWarning("Unknown PaymentType {PaymentType} in {FileName}", paymentModel.PaymentType, fileName);
+                            _logger.LogWarning("[PAYMENT] Unknown PaymentType {PaymentType} in {FileName}", paymentModel.PaymentType, fileName);
                             continue;
                         }
 
                         // Encrypt
                         var pgpFilePath = await _pgpEncryptionService.EncryptAsync(xmlFilePath, stoppingToken);
-                            
-                        _logger.LogInformation("Successfully generated and encrypted XML {XmlFileName} from {FileName}", xmlFileName, fileName);
                         processedBatch.Add((file, pgpFilePath));
+
+                        _logger.LogInformation("[PAYMENT] [{Index}/{Total}] Generated & encrypted {PgpFileName} from {FileName}", 
+                            processedBatch.Count, files.Length, Path.GetFileName(pgpFilePath), fileName);
 
                         // Ensure distinct millisecond timestamps for consecutive files
                         await Task.Delay(15, stoppingToken);
                         continue;
                     }
                     
-                    _logger.LogWarning("Failed to deserialize JSON or PaymentType missing in {FileName}; file was retained for retry.", fileName);
+                    _logger.LogWarning("[PAYMENT] Failed to deserialize JSON or PaymentType missing in {FileName}; file was retained for retry.", fileName);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error generating payment file {FileName}", fileName);
-                    _logger.LogWarning("File {FileName} was retained for retry.", fileName);
+                    _logger.LogError(ex, "[PAYMENT] Error generating payment file {FileName}", fileName);
+                    _logger.LogWarning("[PAYMENT] File {FileName} was retained for retry.", fileName);
                 }
             }
 
             if (processedBatch.Count == 0)
                 return;
+
+            _logger.LogInformation("[PAYMENT] Phase 1 complete: All {Count} PGP file(s) generated successfully.", processedBatch.Count);
 
             // -------------------------------------------------------------
             // Phase 2: Batch SFTP Upload (Single Connection Session)
@@ -225,7 +234,7 @@ namespace BNPPIntegration.Workers
             {
                 try
                 {
-                    _logger.LogInformation("Uploading batch of {Count} payment file(s) to BNP SFTP in a single session...", processedBatch.Count);
+                    _logger.LogInformation("[PAYMENT] Phase 2: Opening single SFTP session to upload {Count} payment file(s)...", processedBatch.Count);
                     var uploadedPgpPaths = await _sftpService.UploadPaymentFilesBatchAsync(
                         processedBatch.Select(x => x.PgpFilePath),
                         stoppingToken);
@@ -239,22 +248,24 @@ namespace BNPPIntegration.Workers
                             try
                             {
                                 File.Delete(item.JsonFilePath);
-                                _logger.LogInformation("Cleaned up source queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                                _logger.LogInformation("[PAYMENT] Cleaned up queue file {FileName}", Path.GetFileName(item.JsonFilePath));
                             }
                             catch (Exception delEx)
                             {
-                                _logger.LogWarning(delEx, "Failed to delete processed queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                                _logger.LogWarning(delEx, "[PAYMENT] Failed to delete queue file {FileName}", Path.GetFileName(item.JsonFilePath));
                             }
                         }
                         else
                         {
-                            _logger.LogWarning("File {FileName} was not uploaded; retaining JSON for retry.", Path.GetFileName(item.JsonFilePath));
+                            _logger.LogWarning("[PAYMENT] File {FileName} was not uploaded; retaining JSON for retry.", Path.GetFileName(item.JsonFilePath));
                         }
                     }
+
+                    _logger.LogInformation("[PAYMENT] Batch complete: {Count} payment(s) dispatched to BNP SFTP.", uploadedSet.Count);
                 }
                 catch (Exception sftpEx)
                 {
-                    _logger.LogError(sftpEx, "Batch SFTP upload failed. Source JSON files will be retained for retry.");
+                    _logger.LogError(sftpEx, "[PAYMENT] Batch SFTP upload failed. Source JSON files will be retained for retry.");
                 }
             }
             else
@@ -268,9 +279,10 @@ namespace BNPPIntegration.Workers
                     }
                     catch (Exception delEx)
                     {
-                        _logger.LogWarning(delEx, "Failed to delete queue file {FileName}", Path.GetFileName(item.JsonFilePath));
+                        _logger.LogWarning(delEx, "[PAYMENT] Failed to delete queue file {FileName}", Path.GetFileName(item.JsonFilePath));
                     }
                 }
+                _logger.LogInformation("[PAYMENT] Batch complete (SFTP disabled): {Count} payment(s) generated.", processedBatch.Count);
             }
         }
 

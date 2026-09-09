@@ -48,7 +48,7 @@ namespace BNPPIntegration.BNPP.Security
             var authMethod = new PrivateKeyAuthenticationMethod(username, keyFile);
             return new ConnectionInfo(host, port, username, authMethod)
             {
-                Timeout = TimeSpan.FromSeconds(60)
+                Timeout = TimeSpan.FromSeconds(30)
             };
         }
 
@@ -93,7 +93,7 @@ namespace BNPPIntegration.BNPP.Security
                 try
                 {
                     await Task.Run(() => client.Connect(), cancellationToken);
-                    _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
+                    _logger.LogInformation("[SFTP] Successfully connected to BNP Paribas SFTP server.");
                     return client;
                 }
                 catch (Exception ex)
@@ -108,45 +108,17 @@ namespace BNPPIntegration.BNPP.Security
 
                     if (attempt >= maxAttempts || cancellationToken.IsCancellationRequested)
                     {
-                        _logger.LogError(ex, "SFTP connection failed after {Attempt} attempt(s): {Message}", attempt, ex.Message);
+                        _logger.LogWarning("[SFTP] Connect failed after {Attempt} attempt(s): {Message}", attempt, ex.Message);
                         throw;
                     }
 
                     var backoffSeconds = attempt * 5;
-                    _logger.LogWarning("SFTP connect attempt {Attempt}/{MaxAttempts} failed: {Message}. Waiting {Delay}s for session release before reconnecting...", attempt, maxAttempts, ex.Message, backoffSeconds);
+                    _logger.LogWarning("[SFTP] Connect attempt {Attempt}/{MaxAttempts} failed: {Message}. Waiting {Delay}s for BNP session release...", attempt, maxAttempts, ex.Message, backoffSeconds);
                     await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), cancellationToken);
                 }
             }
 
             throw new InvalidOperationException("Failed to establish SFTP connection.");
-        }
-
-        public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
-        {
-            if (!IsEnabled)
-            {
-                _logger.LogWarning("SFTP service is disabled in configuration.");
-                return false;
-            }
-
-            await _sftpLock.WaitAsync(cancellationToken);
-            try
-            {
-                using var client = await CreateAndConnectClientAsync(cancellationToken);
-                var connected = client.IsConnected;
-                client.Disconnect();
-                _logger.LogInformation("SFTP Connection Test Succeeded! Host: {Host}:{Port}", client.ConnectionInfo.Host, client.ConnectionInfo.Port);
-                return connected;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "SFTP Connection Test Failed!");
-                return false;
-            }
-            finally
-            {
-                _sftpLock.Release();
-            }
         }
 
         public async Task<IReadOnlyList<string>> UploadPaymentFilesBatchAsync(IEnumerable<string> localPgpFilePaths, CancellationToken cancellationToken = default)
@@ -165,8 +137,9 @@ namespace BNPPIntegration.BNPP.Security
             {
                 using var client = await CreateAndConnectClientAsync(cancellationToken);
 
-                foreach (var localPgpFilePath in fileList)
+                for (var i = 0; i < fileList.Count; i++)
                 {
+                    var localPgpFilePath = fileList[i];
                     var fileName = Path.GetFileName(localPgpFilePath);
                     var remoteFilePath = $"{remoteDir.TrimEnd('/')}/{fileName}";
 
@@ -176,21 +149,19 @@ namespace BNPPIntegration.BNPP.Security
                     }
 
                     uploaded.Add(localPgpFilePath);
-                    _logger.LogInformation("Successfully uploaded {FileName} to BNP SFTP at {RemotePath}", fileName, remoteFilePath);
+                    _logger.LogInformation("[SFTP] [{Index}/{Total}] Uploaded {FileName} to {RemotePath}", i + 1, fileList.Count, fileName, remoteFilePath);
                 }
 
                 client.Disconnect();
+                _logger.LogInformation("[SFTP] Batch upload completed ({Count} file(s)). Disconnected session.", uploaded.Count);
                 return uploaded;
             }
             finally
             {
+                // Cool-down delay to ensure BNP server completely clears session table
+                try { await Task.Delay(3000, CancellationToken.None); } catch { }
                 _sftpLock.Release();
             }
-        }
-
-        public async Task UploadPaymentFileAsync(string localPgpFilePath, CancellationToken cancellationToken = default)
-        {
-            await UploadPaymentFilesBatchAsync(new[] { localPgpFilePath }, cancellationToken);
         }
 
         public async Task<IReadOnlyList<string>> DownloadReportsAsync(
@@ -207,14 +178,21 @@ namespace BNPPIntegration.BNPP.Security
             Directory.CreateDirectory(localDirectory);
             var downloadedFiles = new List<string>();
 
-            await _sftpLock.WaitAsync(cancellationToken);
+            // Non-blocking acquire: If PaymentWorker is currently uploading payments, yield to payments
+            var acquired = await _sftpLock.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+            if (!acquired)
+            {
+                _logger.LogInformation("[BANK-REPORT] SFTP is currently busy (payment upload in progress). Skipping report check this cycle.");
+                return downloadedFiles;
+            }
+
             try
             {
                 using var client = await CreateAndConnectClientAsync(cancellationToken);
 
                 if (!client.Exists(remoteDir))
                 {
-                    _logger.LogWarning("Remote directory {RemoteDir} does not exist on SFTP server.", remoteDir);
+                    _logger.LogWarning("[SFTP] Remote directory {RemoteDir} does not exist on SFTP server.", remoteDir);
                     client.Disconnect();
                     return downloadedFiles;
                 }
@@ -227,10 +205,18 @@ namespace BNPPIntegration.BNPP.Security
 
                 var files = await Task.Run(() => client.ListDirectory(remoteDir), cancellationToken);
                 var remoteFiles = files.Where(f => !f.IsDirectory && !f.Name.StartsWith('.')).ToList();
-                _logger.LogInformation("Found {Total} file(s) in remote {RemoteDir}. Downloading all to local in batch...", remoteFiles.Count, remoteDir);
-
-                foreach (var file in remoteFiles)
+                if (remoteFiles.Count == 0)
                 {
+                    _logger.LogInformation("[SFTP] No bank report files found in remote {RemoteDir}. Session closed.", remoteDir);
+                    client.Disconnect();
+                    return downloadedFiles;
+                }
+
+                _logger.LogInformation("[SFTP] Found {Total} file(s) in remote {RemoteDir}. Downloading all to local in batch...", remoteFiles.Count, remoteDir);
+
+                for (var i = 0; i < remoteFiles.Count; i++)
+                {
+                    var file = remoteFiles[i];
                     var localFilePath = Path.Combine(localDirectory, file.Name);
                     var archivedFilePath = Path.Combine(archiveDir, file.Name);
 
@@ -253,16 +239,16 @@ namespace BNPPIntegration.BNPP.Security
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Downloaded {FileName} but could not delete it from remote server.", file.Name);
+                            _logger.LogWarning(ex, "[SFTP] Downloaded {FileName} but could not delete it from remote server.", file.Name);
                         }
                     }
 
                     downloadedFiles.Add(localFilePath);
-                    _logger.LogInformation("Successfully downloaded bank report: {FileName}", file.Name);
+                    _logger.LogInformation("[SFTP] [{Index}/{Total}] Downloaded bank report: {FileName}", i + 1, remoteFiles.Count, file.Name);
                 }
 
                 client.Disconnect();
-                _logger.LogInformation("Batch download completed. Downloaded {Count} new file(s) from BNP SFTP.", downloadedFiles.Count);
+                _logger.LogInformation("[SFTP] Batch download completed. Downloaded {Count} new file(s) from BNP SFTP.", downloadedFiles.Count);
                 return downloadedFiles;
             }
             finally

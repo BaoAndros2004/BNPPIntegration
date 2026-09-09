@@ -3,7 +3,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
-using BNPPIntegration.BNPP.Payments.Domestic;
 
 namespace BNPPIntegration.BNPP.Payments.Domestic
 {

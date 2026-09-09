@@ -49,7 +49,7 @@ public sealed class PgpEncryptionService
             File.Move(temporaryPath, pgpPath);
 
             _logger.LogInformation(
-                "Created binary PGP file {PgpFileName} using BNP key {Fingerprint}.",
+                "[PGP] Encrypted binary file: {PgpFileName} (Key: {Fingerprint})",
                 Path.GetFileName(pgpPath),
                 keyInfo.PrimaryFingerprint);
 
@@ -60,15 +60,6 @@ public sealed class PgpEncryptionService
             DeleteIfExists(temporaryPath);
             throw;
         }
-    }
-
-    public string GetConfiguredPublicKeyFingerprint()
-    {
-        var publicKeyPath = ResolvePublicKeyPath();
-        if (!File.Exists(publicKeyPath))
-            throw new FileNotFoundException("BNP public key was not found.", publicKeyPath);
-
-        return ReadPublicKey(publicKeyPath).PrimaryFingerprint;
     }
 
     private static async Task EncryptBinaryAsync(

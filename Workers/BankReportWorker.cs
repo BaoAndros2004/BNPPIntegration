@@ -65,12 +65,26 @@ namespace BNPPIntegration.Workers
                 stoppingToken);
 
             using var timer = new PeriodicTimer(processingInterval);
-            while (await timer.WaitForNextTickAsync(stoppingToken))
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await RunProcessingCycleAsync(
-                    bankReportDirectory,
-                    archiveDirectory,
-                    stoppingToken);
+                try
+                {
+                    if (await timer.WaitForNextTickAsync(stoppingToken))
+                    {
+                        await RunProcessingCycleAsync(
+                            bankReportDirectory,
+                            archiveDirectory,
+                            stoppingToken);
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception loopEx)
+                {
+                    _logger.LogWarning(loopEx, "[BANK-REPORT] Unexpected issue during report check. Background loop continues.");
+                }
             }
         }
 
@@ -81,8 +95,6 @@ namespace BNPPIntegration.Workers
         {
             try
             {
-                _logger.LogInformation("Bank report processing cycle started.");
-
                 if (_sftpService.IsEnabled)
                 {
                     try
@@ -91,16 +103,15 @@ namespace BNPPIntegration.Workers
                     }
                     catch (Exception sftpEx)
                     {
-                        _logger.LogError(sftpEx, "Error downloading reports from BNP SFTP server.");
+                        _logger.LogWarning("[BANK-REPORT] SFTP check skipped or timed out ({Message}). Will retry next scheduled cycle.", sftpEx.Message);
                     }
                 }
 
                 await ProcessFilesAsync(bankReportDirectory, archiveDirectory, stoppingToken);
-                _logger.LogInformation("Bank report processing cycle completed.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred while processing bank report files.");
+                _logger.LogError(ex, "[BANK-REPORT] An error occurred while processing bank report files.");
             }
         }
 
@@ -110,7 +121,7 @@ namespace BNPPIntegration.Workers
             if (files.Length == 0)
                 return;
 
-            _logger.LogInformation("All files downloaded. Starting batch parsing and UD26 save for {Count} report file(s)...", files.Length);
+            _logger.LogInformation("[BANK-REPORT] Download complete. Starting batch parsing and UD26 save for {Count} report file(s)...", files.Length);
 
             using var scope = _scopeFactory.CreateScope();
             var wmsApiClient = scope.ServiceProvider.GetRequiredService<WmsApiClient>();
@@ -119,6 +130,7 @@ namespace BNPPIntegration.Workers
             var mt940Parser = scope.ServiceProvider.GetRequiredService<MT940Parser>();
             var mt942Parser = scope.ServiceProvider.GetRequiredService<MT942Parser>();
 
+            var processedCount = 0;
             foreach (var file in files)
             {
                 var fileName = Path.GetFileName(file);
@@ -166,13 +178,13 @@ namespace BNPPIntegration.Workers
                             break;
 
                         default:
-                            _logger.LogWarning("Could not determine report type from the content of {FileName}", fileName);
+                            _logger.LogWarning("[BANK-REPORT] Could not determine report type from the content of {FileName}", fileName);
                             break;
                     }
                     
                     if (success)
                     {
-                        _logger.LogInformation("Successfully processed file {FileName}", fileName);
+                        _logger.LogInformation("[BANK-REPORT] Successfully processed and saved {FileName} to UD26", fileName);
                         Directory.CreateDirectory(archiveDirectory);
                         var destPath = Path.Combine(archiveDirectory, fileName);
                         if (File.Exists(destPath))
@@ -180,18 +192,23 @@ namespace BNPPIntegration.Workers
                             File.Delete(destPath);
                         }
                         File.Move(file, destPath);
+                        processedCount++;
                     }
                     else
                     {
-                        _logger.LogWarning("Failed to parse file {FileName}", fileName);
-                        _logger.LogWarning("File {FileName} was retained for retry.", fileName);
+                        _logger.LogWarning("[BANK-REPORT] Failed to parse file {FileName}; retained for retry.", fileName);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error processing file {FileName}", fileName);
-                    _logger.LogWarning("File {FileName} was retained for retry.", fileName);
+                    _logger.LogError(ex, "[BANK-REPORT] Error processing file {FileName}", fileName);
+                    _logger.LogWarning("[BANK-REPORT] File {FileName} was retained for retry.", fileName);
                 }
+            }
+
+            if (processedCount > 0)
+            {
+                _logger.LogInformation("[BANK-REPORT] Batch report processing completed. {Count} report(s) successfully recorded into Epicor UD26.", processedCount);
             }
         }
 
