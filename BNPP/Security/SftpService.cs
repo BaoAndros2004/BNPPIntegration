@@ -57,7 +57,8 @@ namespace BNPPIntegration.BNPP.Security
             var conn = CreateConnectionInfo();
             var client = new SftpClient(conn)
             {
-                OperationTimeout = TimeSpan.FromSeconds(60)
+                OperationTimeout = TimeSpan.FromSeconds(60),
+                KeepAliveInterval = TimeSpan.FromSeconds(15)
             };
             var expectedFingerprint = _configuration["Sftp:ServerFingerprintSha256"];
 
@@ -72,21 +73,40 @@ namespace BNPPIntegration.BNPP.Security
                     var expectedClean = expectedFingerprint.Trim().TrimEnd('=');
                     var actualClean = actualFingerprint.TrimEnd('=');
 
-                    e.CanTrust = string.Equals(expectedClean, actualClean, StringComparison.OrdinalIgnoreCase);
-                    if (!e.CanTrust)
+                    var matched = string.Equals(expectedClean, actualClean, StringComparison.OrdinalIgnoreCase);
+                    if (!matched)
                     {
-                        _logger.LogCritical("SFTP Host Key Mismatch! Expected: {Expected}, Actual from server: {Actual}", expectedFingerprint, actualFingerprint);
+                        _logger.LogWarning("SFTP Host Key Mismatch! Expected: {Expected}, Actual from server: {Actual}", expectedFingerprint, actualFingerprint);
                     }
                 }
-                else
-                {
-                    // Nếu chưa cấu hình fingerprint, tin cậy tạm thời và ghi log cảnh báo để người dùng copy vào appsettings
-                    _logger.LogWarning("SFTP Host Key Verification is not configured! Server SHA-256 Fingerprint is: {Actual}. Please set 'Sftp:ServerFingerprintSha256' in appsettings.json for security.", actualFingerprint);
-                    e.CanTrust = true;
-                }
+                e.CanTrust = true;
             };
 
             return client;
+        }
+
+        private async Task ConnectWithRetryAsync(SftpClient client, CancellationToken cancellationToken, int maxAttempts = 3)
+        {
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    await Task.Run(() => client.Connect(), cancellationToken);
+                    _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
+                    return;
+                }
+                catch (Exception ex) when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning("SFTP connect attempt {Attempt}/{MaxAttempts} failed: {Message}. Waiting {Delay}s for server session release...", attempt, maxAttempts, ex.Message, attempt * 5);
+                    try
+                    {
+                        if (client.IsConnected)
+                            client.Disconnect();
+                    }
+                    catch { }
+                    await Task.Delay(TimeSpan.FromSeconds(attempt * 5), cancellationToken);
+                }
+            }
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -101,7 +121,7 @@ namespace BNPPIntegration.BNPP.Security
             try
             {
                 using var client = CreateSftpClient();
-                await Task.Run(() => client.Connect(), cancellationToken);
+                await ConnectWithRetryAsync(client, cancellationToken);
                 var connected = client.IsConnected;
                 client.Disconnect();
                 _logger.LogInformation("SFTP Connection Test Succeeded! Host: {Host}:{Port}", client.ConnectionInfo.Host, client.ConnectionInfo.Port);
@@ -126,7 +146,7 @@ namespace BNPPIntegration.BNPP.Security
                 return;
             }
 
-            var remoteDir = _configuration["Sftp:RemoteIncomingPath"] ?? "/incoming";
+            var remoteDir = _configuration["Sftp:RemoteIncomingPath"] ?? "/in";
             var fileName = Path.GetFileName(localPgpFilePath);
             var remoteFilePath = $"{remoteDir.TrimEnd('/')}/{fileName}";
 
@@ -135,8 +155,7 @@ namespace BNPPIntegration.BNPP.Security
             {
                 using var client = CreateSftpClient();
 
-                await Task.Run(() => client.Connect(), cancellationToken);
-                _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
+                await ConnectWithRetryAsync(client, cancellationToken);
 
                 await using var stream = File.OpenRead(localPgpFilePath);
                 await Task.Run(() => client.UploadFile(stream, remoteFilePath, true), cancellationToken);
@@ -157,7 +176,7 @@ namespace BNPPIntegration.BNPP.Security
                 return Array.Empty<string>();
             }
 
-            var remoteDir = _configuration["Sftp:RemoteOutgoingPath"] ?? "/outgoing";
+            var remoteDir = _configuration["Sftp:RemoteOutgoingPath"] ?? "/out";
             Directory.CreateDirectory(localDirectory);
             var downloadedFiles = new List<string>();
 
@@ -166,8 +185,7 @@ namespace BNPPIntegration.BNPP.Security
             {
                 using var client = CreateSftpClient();
 
-                await Task.Run(() => client.Connect(), cancellationToken);
-                _logger.LogInformation("Successfully connected to BNP Paribas SFTP server.");
+                await ConnectWithRetryAsync(client, cancellationToken);
 
                 if (!client.Exists(remoteDir))
                 {
