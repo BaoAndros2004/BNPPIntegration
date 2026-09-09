@@ -198,13 +198,19 @@ namespace BNPPIntegration.BNPP.Payments.International
 
         private InternationalAccount ResolveCompanyAccount(InternationalAccount? account)
         {
-            var currency = string.IsNullOrWhiteSpace(account?.Currency) ? _defaultCompanyAccountCurrency : account.Currency;
+            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
+                ? account.Identification.Trim()
+                : _companyAccount;
+
+            var currency = !string.IsNullOrWhiteSpace(account?.Currency)
+                ? account.Currency.Trim()
+                : _defaultCompanyAccountCurrency;
 
             return new InternationalAccount
             {
-                Identification = _companyAccount,
+                Identification = accountId,
                 Currency = currency,
-                IdentificationType = InternationalAccountIdentificationType.Other
+                IdentificationType = account?.IdentificationType ?? InternationalAccountIdentificationType.Other
             };
         }
 

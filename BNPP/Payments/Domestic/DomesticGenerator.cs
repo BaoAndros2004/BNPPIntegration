@@ -197,13 +197,19 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
 
         private DomesticAccount ResolveCompanyAccount(DomesticAccount? account)
         {
-            var currency = string.IsNullOrWhiteSpace(account?.Currency) ? _defaultCompanyAccountCurrency : account.Currency;
+            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
+                ? account.Identification.Trim()
+                : _companyAccount;
+
+            var currency = !string.IsNullOrWhiteSpace(account?.Currency)
+                ? account.Currency.Trim()
+                : _defaultCompanyAccountCurrency;
 
             return new DomesticAccount
             {
-                Identification = _companyAccount,
+                Identification = accountId,
                 Currency = currency,
-                IdentificationType = DomesticAccountIdentificationType.Other
+                IdentificationType = account?.IdentificationType ?? DomesticAccountIdentificationType.Other
             };
         }
 

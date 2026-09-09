@@ -100,6 +100,9 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
             var debtorAgentName = string.IsNullOrWhiteSpace(payment.DebtorAgentName) ? _defaultCompanyBankName : payment.DebtorAgentName;
             var debtorAgentCountry = string.IsNullOrWhiteSpace(payment.DebtorAgentCountry) ? _defaultCompanyCountry : payment.DebtorAgentCountry;
 
+            var firstTxCurrency = payment.Transactions.FirstOrDefault()?.Currency;
+            var resolvedDebtorAccount = ResolveCompanyAccount(payment.DebtorAccount, firstTxCurrency);
+
             return new XElement(_namespace + "PmtInf",
                 Element("PmtInfId", payment.PaymentInformationId?.Trim() ?? string.Empty),
                 Element("PmtMtd", _paymentMethod),
@@ -111,7 +114,7 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                     new XElement(_namespace + "CtgyPurp", Element("Cd", "INTC"))),
                 Element("ReqdExctnDt", payment.RequestedExecutionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                 CreateParty("Dbtr", ResolveCompanyParty(payment.Debtor), defaultCountry: _defaultCompanyCountry),
-                CreateAccount("DbtrAcct", ResolveCompanyAccount(payment.DebtorAccount), true),
+                CreateAccount("DbtrAcct", resolvedDebtorAccount, true),
                 CreateBicInstitution("DbtrAgt", debtorAgentBic, debtorAgentName, debtorAgentCountry),
                 payment.Transactions.Select(CreateTransaction));
         }
@@ -207,15 +210,21 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                 PostalAddress = party?.PostalAddress
             };
 
-        private IntraCompanyAccount ResolveCompanyAccount(IntraCompanyAccount? account)
+        private IntraCompanyAccount ResolveCompanyAccount(IntraCompanyAccount? account, string? fallbackCurrency = null)
         {
-            var currency = string.IsNullOrWhiteSpace(account?.Currency) ? _defaultCompanyAccountCurrency : account.Currency;
+            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
+                ? account.Identification.Trim()
+                : _companyAccount;
+
+            var currency = !string.IsNullOrWhiteSpace(account?.Currency)
+                ? account.Currency.Trim()
+                : (!string.IsNullOrWhiteSpace(fallbackCurrency) ? fallbackCurrency.Trim() : _defaultCompanyAccountCurrency);
 
             return new IntraCompanyAccount
             {
-                Identification = _companyAccount,
+                Identification = accountId,
                 Currency = currency,
-                IdentificationType = IntraCompanyAccountIdentificationType.Other
+                IdentificationType = account?.IdentificationType ?? IntraCompanyAccountIdentificationType.Other
             };
         }
 
@@ -232,9 +241,12 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                 var instructionPriority = string.IsNullOrWhiteSpace(payment.InstructionPriority) ? _defaultInstructionPriority : payment.InstructionPriority;
                 var debtorAgentBic = string.IsNullOrWhiteSpace(payment.DebtorAgentBic) ? _defaultCompanyBankBic : payment.DebtorAgentBic;
 
+                var firstTxCurrency = payment.Transactions.FirstOrDefault()?.Currency;
+                var resolvedDebtorAccount = ResolveCompanyAccount(payment.DebtorAccount, firstTxCurrency);
+
                 NumericRequired(payment.PaymentInformationId, "PaymentInformationId", 16);
                 Required(ResolveCompanyParty(payment.Debtor).Name, "Debtor.Name", 140);
-                ValidateAccount(ResolveCompanyAccount(payment.DebtorAccount), "DebtorAccount");
+                ValidateAccount(resolvedDebtorAccount, "DebtorAccount");
                 Required(debtorAgentBic, "DebtorAgentBic", 11);
                 
                 if (!string.Equals(instructionPriority.Trim(), "NORM", StringComparison.OrdinalIgnoreCase))
@@ -260,6 +272,13 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                     }
                     
                     if (!CurrencyPattern().IsMatch(NormalizeCode(transaction.Currency))) throw new ArgumentException("Currency is invalid.");
+
+                    // BNP Requirement: The currency transfer need to be the same as the currency of ordering account
+                    if (!string.Equals(NormalizeCode(transaction.Currency), NormalizeCode(resolvedDebtorAccount.Currency ?? string.Empty), StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException($"For IntraCompany (INTC) payment, transfer currency '{transaction.Currency}' must match ordering account currency '{resolvedDebtorAccount.Currency}'.");
+                    }
+
                     Required(transaction.Creditor.Name, "Creditor.Name", 140);
                     ValidateAccount(transaction.CreditorAccount, "CreditorAccount");
                     Optional(transaction.RemittanceInformation, "RemittanceInformation", 140);
