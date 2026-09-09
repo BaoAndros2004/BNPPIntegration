@@ -36,8 +36,8 @@ builder.Services.AddSingleton<SftpService>();
 
 builder.Services.AddHttpClient<WmsApiClient>();
 
-builder.Services.AddHostedService<BankReportWorker>();
 builder.Services.AddHostedService<PaymentWorker>();
+builder.Services.AddHostedService<BankReportWorker>();
 
 var host = builder.Build();
 host.Run();

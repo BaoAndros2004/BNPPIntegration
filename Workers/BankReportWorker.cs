@@ -61,8 +61,10 @@ namespace BNPPIntegration.Workers
                 bankReportDirectory,
                 intervalMinutes);
 
-            // Run immediately when the host starts. The configured interval is
-            // the wait between subsequent runs, not an initial startup delay.
+            // Trì hoãn 30 giây lúc khởi động để chiều IN (PaymentWorker) hoàn tất việc quét và đẩy các thanh toán tồn đọng trước
+            _logger.LogInformation("Bank report worker will start initial check in 30 seconds to prioritize payment uploads.");
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+
             await RunProcessingCycleAsync(
                 bankReportDirectory,
                 stoppingToken);
