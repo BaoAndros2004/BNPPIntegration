@@ -121,13 +121,18 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
 
         private XElement CreateTransaction(IntraCompanyTransaction transaction, string debtorCurrency)
         {
+            var resolvedCreditorAccount = ResolveCreditorAccount(transaction.CreditorAccount, debtorCurrency);
+            var creditorCurrency = !string.IsNullOrWhiteSpace(resolvedCreditorAccount.Currency)
+                ? resolvedCreditorAccount.Currency
+                : transaction.Currency;
+
             XElement amountElement;
             if (transaction.EquivalentAmount.HasValue && !string.IsNullOrWhiteSpace(transaction.TransferCurrency))
             {
                 amountElement = new XElement(_namespace + "Amt",
                     new XElement(_namespace + "EqvtAmt",
                         new XElement(_namespace + "Amt",
-                            new XAttribute("Ccy", NormalizeCode(transaction.Currency)),
+                            new XAttribute("Ccy", NormalizeCode(creditorCurrency)),
                             FormatAmount(transaction.EquivalentAmount.Value)),
                         Element("CcyOfTrf", NormalizeCode(transaction.TransferCurrency))));
             }
@@ -135,11 +140,9 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
             {
                 amountElement = new XElement(_namespace + "Amt",
                     new XElement(_namespace + "InstdAmt",
-                        new XAttribute("Ccy", NormalizeCode(transaction.Currency)),
+                        new XAttribute("Ccy", NormalizeCode(creditorCurrency)),
                         FormatAmount(transaction.Amount)));
             }
-
-            var resolvedCreditorAccount = ResolveCreditorAccount(transaction.CreditorAccount, debtorCurrency);
 
             var cdtrAgtBic = !string.IsNullOrWhiteSpace(transaction.CreditorAgentBic)
                 ? transaction.CreditorAgentBic
