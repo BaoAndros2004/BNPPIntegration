@@ -139,25 +139,39 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                         FormatAmount(transaction.Amount)));
             }
 
+            var resolvedCreditorAccount = ResolveCompanyAccount(
+                transaction.CreditorAccount,
+                transaction.TransferCurrency ?? transaction.Currency);
+
+            var cdtrAgtBic = !string.IsNullOrWhiteSpace(transaction.CreditorAgentBic)
+                ? transaction.CreditorAgentBic
+                : _defaultCompanyBankBic;
+            var cdtrAgtName = !string.IsNullOrWhiteSpace(transaction.CreditorAgentName)
+                ? transaction.CreditorAgentName
+                : (!string.IsNullOrWhiteSpace(transaction.CreditorAgentBic) ? null : _defaultCompanyBankName);
+            var cdtrAgtCountry = !string.IsNullOrWhiteSpace(transaction.CreditorAgentBic)
+                ? null
+                : _defaultCompanyCountry;
+
             return new XElement(_namespace + "CdtTrfTxInf",
                 new XElement(_namespace + "PmtId",
                     OptionalElement("InstrId", transaction.InstructionId),
                     Element("EndToEndId", transaction.EndToEndId.Trim())),
                 amountElement,
-                CreateBicInstitution("CdtrAgt", _defaultCompanyBankBic, _defaultCompanyBankName, _defaultCompanyCountry),
+                CreateBicInstitution("CdtrAgt", cdtrAgtBic, cdtrAgtName, cdtrAgtCountry),
                 CreateParty("Cdtr", ResolveCreditorCompanyParty(transaction.Creditor), defaultCountry: _defaultCompanyCountry),
-                CreateAccount("CdtrAcct", transaction.CreditorAccount, true),
+                CreateAccount("CdtrAcct", resolvedCreditorAccount, true),
                 string.IsNullOrWhiteSpace(transaction.RemittanceInformation)
                     ? null
                     : new XElement(_namespace + "RmtInf", Element("Ustrd", transaction.RemittanceInformation.Trim())));
         }
 
-        private XElement CreateBicInstitution(string name, string bic, string? institutionName, string country) =>
+        private XElement CreateBicInstitution(string name, string bic, string? institutionName, string? country) =>
             new(_namespace + name,
                 new XElement(_namespace + "FinInstnId",
                     Element("BIC", NormalizeCode(bic)),
                     OptionalElement("Nm", institutionName),
-                    CreatePostalAddress(new IntraCompanyPostalAddress { Country = country })));
+                    !string.IsNullOrWhiteSpace(country) ? CreatePostalAddress(new IntraCompanyPostalAddress { Country = country }) : null));
 
         private XElement CreateParty(
             string name,
@@ -191,10 +205,10 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                 if (!id.EndsWith(currency, StringComparison.OrdinalIgnoreCase)) id += currency;
             }
 
-            var identification = account.IdentificationType == IntraCompanyAccountIdentificationType.Iban
-                ? Element("IBAN", RemoveWhitespace(account.Identification).ToUpperInvariant())
-                : new XElement(_namespace + "Othr", Element("Id", id));
-            return new XElement(_namespace + name, new XElement(_namespace + "Id", identification));
+            return new XElement(_namespace + name,
+                new XElement(_namespace + "Id",
+                    new XElement(_namespace + "Othr",
+                        Element("Id", id))));
         }
 
         private IntraCompanyParty ResolveCompanyParty(IntraCompanyParty? party) =>
@@ -224,7 +238,7 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
             {
                 Identification = accountId,
                 Currency = currency,
-                IdentificationType = account?.IdentificationType ?? IntraCompanyAccountIdentificationType.Other
+                IdentificationType = IntraCompanyAccountIdentificationType.Other
             };
         }
 
@@ -279,8 +293,12 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
                         throw new ArgumentException($"For IntraCompany (INTC) payment, transfer currency '{transaction.Currency}' must match ordering account currency '{resolvedDebtorAccount.Currency}'.");
                     }
 
-                    Required(transaction.Creditor.Name, "Creditor.Name", 140);
-                    ValidateAccount(transaction.CreditorAccount, "CreditorAccount");
+                    var resolvedCreditorAccount = ResolveCompanyAccount(
+                        transaction.CreditorAccount,
+                        transaction.TransferCurrency ?? transaction.Currency);
+
+                    Required(ResolveCreditorCompanyParty(transaction.Creditor).Name, "Creditor.Name", 140);
+                    ValidateAccount(resolvedCreditorAccount, "CreditorAccount");
                     Optional(transaction.RemittanceInformation, "RemittanceInformation", 140);
                 }
             }
@@ -335,8 +353,6 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
         private static partial Regex CurrencyPattern();
         [GeneratedRegex("^[0-9]+$")]
         private static partial Regex NumericPattern();
-        [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$")]
-        private static partial Regex IbanPattern();
     }
 }
 

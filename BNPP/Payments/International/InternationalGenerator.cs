@@ -94,6 +94,8 @@ namespace BNPPIntegration.BNPP.Payments.International
             var debtorAgentBic = string.IsNullOrWhiteSpace(payment.DebtorAgentBic) ? _defaultCompanyBankBic : payment.DebtorAgentBic;
             var debtorAgentName = string.IsNullOrWhiteSpace(payment.DebtorAgentName) ? _defaultCompanyBankName : payment.DebtorAgentName;
             var debtorAgentCountry = string.IsNullOrWhiteSpace(payment.DebtorAgentCountry) ? _defaultCompanyCountry : payment.DebtorAgentCountry;
+            var firstTxCurrency = payment.Transactions.FirstOrDefault()?.Currency;
+            var resolvedDebtorAccount = ResolveCompanyAccount(payment.DebtorAccount, firstTxCurrency);
 
             return new XElement(_namespace + "PmtInf",
                 Element("PmtInfId", payment.PaymentInformationId?.Trim() ?? string.Empty),
@@ -104,7 +106,7 @@ namespace BNPPIntegration.BNPP.Payments.International
                 new XElement(_namespace + "PmtTpInf", Element("InstrPrty", NormalizeCode(instructionPriority))),
                 Element("ReqdExctnDt", payment.RequestedExecutionDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                 CreateParty("Dbtr", ResolveCompanyParty(payment.Debtor), defaultCountry: _defaultCompanyCountry),
-                CreateAccount("DbtrAcct", ResolveCompanyAccount(payment.DebtorAccount), true),
+                CreateAccount("DbtrAcct", resolvedDebtorAccount, true),
                 CreateBicInstitution("DbtrAgt", debtorAgentBic, debtorAgentName, debtorAgentCountry),
                 OptionalElement("ChrgBr", payment.ChargeBearer?.ToUpperInvariant()),
                 payment.Transactions.Select(CreateTransaction));
@@ -185,10 +187,10 @@ namespace BNPPIntegration.BNPP.Payments.International
                 if (!id.EndsWith(currency, StringComparison.OrdinalIgnoreCase)) id += currency;
             }
 
-            var identification = account.IdentificationType == InternationalAccountIdentificationType.Iban
-                ? Element("IBAN", RemoveWhitespace(account.Identification).ToUpperInvariant())
-                : new XElement(_namespace + "Othr", Element("Id", id));
-            return new XElement(_namespace + name, new XElement(_namespace + "Id", identification));
+            return new XElement(_namespace + name,
+                new XElement(_namespace + "Id",
+                    new XElement(_namespace + "Othr",
+                        Element("Id", id))));
         }
 
         private InternationalParty ResolveCompanyParty(InternationalParty? party) =>
@@ -196,7 +198,7 @@ namespace BNPPIntegration.BNPP.Payments.International
                 ? new InternationalParty { Name = _companyName, BicOrBei = party?.BicOrBei, PostalAddress = party?.PostalAddress }
                 : party;
 
-        private InternationalAccount ResolveCompanyAccount(InternationalAccount? account)
+        private InternationalAccount ResolveCompanyAccount(InternationalAccount? account, string? fallbackCurrency = null)
         {
             var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
                 ? account.Identification.Trim()
@@ -204,13 +206,13 @@ namespace BNPPIntegration.BNPP.Payments.International
 
             var currency = !string.IsNullOrWhiteSpace(account?.Currency)
                 ? account.Currency.Trim()
-                : _defaultCompanyAccountCurrency;
+                : (!string.IsNullOrWhiteSpace(fallbackCurrency) ? fallbackCurrency.Trim() : _defaultCompanyAccountCurrency);
 
             return new InternationalAccount
             {
                 Identification = accountId,
                 Currency = currency,
-                IdentificationType = account?.IdentificationType ?? InternationalAccountIdentificationType.Other
+                IdentificationType = InternationalAccountIdentificationType.Other
             };
         }
 
@@ -295,15 +297,12 @@ namespace BNPPIntegration.BNPP.Payments.International
         private XElement Element(string name, string value) => new(_namespace + name, value);
         private XElement? OptionalElement(string name, string? value) => string.IsNullOrWhiteSpace(value) ? null : Element(name, value.Trim());
         private static string NormalizeCode(string value) => value.Trim().ToUpperInvariant();
-        private static string RemoveWhitespace(string value) => new(value.Where(character => !char.IsWhiteSpace(character)).ToArray());
         private static string FormatAmount(decimal value) => value.ToString("0.#################", CultureInfo.InvariantCulture);
 
         [GeneratedRegex("^[A-Z]{3}$")]
         private static partial Regex CurrencyPattern();
         [GeneratedRegex("^[0-9]+$")]
         private static partial Regex NumericPattern();
-        [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$")]
-        private static partial Regex IbanPattern();
     }
 }
 

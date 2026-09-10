@@ -62,8 +62,8 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
 
     public enum IntraCompanyAccountIdentificationType
     {
-        Iban = 0,
-        Other = 1
+        Other = 0,
+        Iban = 1
     }
 }
 

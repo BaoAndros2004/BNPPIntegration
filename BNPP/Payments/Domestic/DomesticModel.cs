@@ -61,8 +61,8 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
 
     public enum DomesticAccountIdentificationType
     {
-        Iban = 0,
-        Other = 1
+        Other = 0,
+        Iban = 1
     }
 }
 

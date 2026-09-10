@@ -183,10 +183,10 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
                 if (!id.EndsWith(currency, StringComparison.OrdinalIgnoreCase)) id += currency;
             }
 
-            var identification = account.IdentificationType == DomesticAccountIdentificationType.Iban
-                ? Element("IBAN", RemoveWhitespace(account.Identification).ToUpperInvariant())
-                : new XElement(_namespace + "Othr", Element("Id", id));
-            return new XElement(_namespace + name, new XElement(_namespace + "Id", identification));
+            return new XElement(_namespace + name,
+                new XElement(_namespace + "Id",
+                    new XElement(_namespace + "Othr",
+                        Element("Id", id))));
         }
 
         private DomesticParty ResolveCompanyParty(DomesticParty? party) =>
@@ -208,7 +208,7 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
             {
                 Identification = accountId,
                 Currency = currency,
-                IdentificationType = account?.IdentificationType ?? DomesticAccountIdentificationType.Other
+                IdentificationType = DomesticAccountIdentificationType.Other
             };
         }
 
@@ -300,8 +300,6 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
         private static partial Regex CurrencyPattern();
         [GeneratedRegex("^[0-9]+$")]
         private static partial Regex NumericPattern();
-        [GeneratedRegex("^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$")]
-        private static partial Regex IbanPattern();
     }
 }
 
