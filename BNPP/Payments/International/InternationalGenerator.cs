@@ -10,7 +10,6 @@ namespace BNPPIntegration.BNPP.Payments.International
     {
         private readonly XNamespace _namespace;
         private readonly string _companyName;
-        private readonly string _companyVndAccount;
         private readonly string _companyUsdAccount;
 
         private readonly string _defaultInstructionPriority;
@@ -22,7 +21,6 @@ namespace BNPPIntegration.BNPP.Payments.International
         public InternationalGenerator(IConfiguration configuration)
         {
             _companyName = RequiredConfiguration(configuration, "Payments:CompanyName");
-            _companyVndAccount = RequiredConfiguration(configuration, "Payments:CompanyVNDAccount", "Payments:CompanyAccount");
             _companyUsdAccount = RequiredConfiguration(configuration, "Payments:CompanyUSDAccount");
             _namespace = RequiredConfiguration(configuration, "Payments:XmlNamespace");
             
@@ -204,17 +202,16 @@ namespace BNPPIntegration.BNPP.Payments.International
                 ? account.Currency.Trim()
                 : (!string.IsNullOrWhiteSpace(fallbackCurrency) ? fallbackCurrency.Trim() : "USD");
 
-            var defaultAccount = string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase)
-                ? _companyUsdAccount
-                : _companyVndAccount;
-
-            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
+            var id = !string.IsNullOrWhiteSpace(account?.Identification)
                 ? account.Identification.Trim()
-                : defaultAccount;
+                : _companyUsdAccount;
+
+            if (id.EndsWith("USD", StringComparison.OrdinalIgnoreCase)) id = id[..^3].Trim();
+            if (id.EndsWith("VND", StringComparison.OrdinalIgnoreCase)) id = id[..^3].Trim();
 
             return new InternationalAccount
             {
-                Identification = accountId,
+                Identification = id,
                 Currency = currency,
                 IdentificationType = InternationalAccountIdentificationType.Other
             };
@@ -233,9 +230,12 @@ namespace BNPPIntegration.BNPP.Payments.International
                 var instructionPriority = string.IsNullOrWhiteSpace(payment.InstructionPriority) ? _defaultInstructionPriority : payment.InstructionPriority;
                 var debtorAgentBic = string.IsNullOrWhiteSpace(payment.DebtorAgentBic) ? _defaultCompanyBankBic : payment.DebtorAgentBic;
 
+                var firstTxCurrency = payment.Transactions.FirstOrDefault()?.Currency;
+                var resolvedDebtorAccount = ResolveCompanyAccount(payment.DebtorAccount, firstTxCurrency);
+
                 NumericRequired(payment.PaymentInformationId, "PaymentInformationId", 16);
                 Required(ResolveCompanyParty(payment.Debtor).Name, "Debtor.Name", 140);
-                ValidateAccount(ResolveCompanyAccount(payment.DebtorAccount), "DebtorAccount");
+                ValidateAccount(resolvedDebtorAccount, "DebtorAccount");
                 Required(debtorAgentBic, "DebtorAgentBic", 11);
                 
                 if (!string.Equals(instructionPriority.Trim(), "NORM", StringComparison.OrdinalIgnoreCase))
