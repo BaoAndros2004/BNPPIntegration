@@ -12,9 +12,8 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
         private readonly string _clearingSystemId;
         private readonly string _creditorAgentMemberId;
         private readonly string _companyName;
-        private readonly string _companyAccount;
+        private readonly string _companyVndAccount;
         private readonly string _defaultInstructionPriority;
-        private readonly string _defaultCompanyAccountCurrency;
         private readonly string _defaultCompanyBankBic;
         private readonly string _defaultCompanyBankName;
         private readonly string _defaultCompanyCountry;
@@ -23,13 +22,12 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
         public DomesticGenerator(IConfiguration configuration)
         {
             _companyName = RequiredConfiguration(configuration, "Payments:CompanyName");
-            _companyAccount = RequiredConfiguration(configuration, "Payments:CompanyAccount");
+            _companyVndAccount = RequiredConfiguration(configuration, "Payments:CompanyVNDAccount", "Payments:CompanyAccount");
             _namespace = RequiredConfiguration(configuration, "Payments:XmlNamespace");
             _clearingSystemId = RequiredConfiguration(configuration, "Payments:ClearingSystemId");
             _creditorAgentMemberId = RequiredConfiguration(configuration, "Payments:CreditorAgentMemberId");
             
             _defaultInstructionPriority = RequiredConfiguration(configuration, "Payments:InstructionPriority");
-            _defaultCompanyAccountCurrency = RequiredConfiguration(configuration, "Payments:CompanyAccountCurrency");
             _defaultCompanyBankBic = RequiredConfiguration(configuration, "Payments:CompanyBankBic");
             _defaultCompanyBankName = RequiredConfiguration(configuration, "Payments:CompanyBankName");
             _defaultCompanyCountry = RequiredConfiguration(configuration, "Payments:CompanyCountry");
@@ -198,11 +196,11 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
         {
             var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
                 ? account.Identification.Trim()
-                : _companyAccount;
+                : _companyVndAccount;
 
             var currency = !string.IsNullOrWhiteSpace(account?.Currency)
                 ? account.Currency.Trim()
-                : _defaultCompanyAccountCurrency;
+                : "VND";
 
             return new DomesticAccount
             {
@@ -287,6 +285,14 @@ namespace BNPPIntegration.BNPP.Payments.Domestic
             var value = configuration[key];
             return string.IsNullOrWhiteSpace(value)
                 ? throw new InvalidOperationException($"{key} is required.")
+                : value.Trim();
+        }
+
+        private static string RequiredConfiguration(IConfiguration configuration, string primaryKey, string fallbackKey)
+        {
+            var value = configuration[primaryKey] ?? configuration[fallbackKey];
+            return string.IsNullOrWhiteSpace(value)
+                ? throw new InvalidOperationException($"{primaryKey} is required.")
                 : value.Trim();
         }
 

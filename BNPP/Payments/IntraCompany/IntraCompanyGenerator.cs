@@ -10,10 +10,10 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
     {
         private readonly XNamespace _namespace;
         private readonly string _companyName;
-        private readonly string _companyAccount;
+        private readonly string _companyVndAccount;
+        private readonly string _companyUsdAccount;
 
         private readonly string _defaultInstructionPriority;
-        private readonly string _defaultCompanyAccountCurrency;
         private readonly string _defaultCompanyBankBic;
         private readonly string _defaultCompanyBankName;
         private readonly string _defaultCompanyCountry;
@@ -22,11 +22,11 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
         public IntraCompanyGenerator(IConfiguration configuration)
         {
             _companyName = RequiredConfiguration(configuration, "Payments:CompanyName");
-            _companyAccount = RequiredConfiguration(configuration, "Payments:CompanyAccount");
+            _companyVndAccount = RequiredConfiguration(configuration, "Payments:CompanyVNDAccount", "Payments:CompanyAccount");
+            _companyUsdAccount = RequiredConfiguration(configuration, "Payments:CompanyUSDAccount");
             _namespace = RequiredConfiguration(configuration, "Payments:XmlNamespace");
             
             _defaultInstructionPriority = RequiredConfiguration(configuration, "Payments:InstructionPriority");
-            _defaultCompanyAccountCurrency = RequiredConfiguration(configuration, "Payments:CompanyAccountCurrency");
             _defaultCompanyBankBic = RequiredConfiguration(configuration, "Payments:CompanyBankBic");
             _defaultCompanyBankName = RequiredConfiguration(configuration, "Payments:CompanyBankName");
             _defaultCompanyCountry = RequiredConfiguration(configuration, "Payments:CompanyCountry");
@@ -201,7 +201,7 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
             if (appendCurrency)
             {
                 var currency = NormalizeCode(
-                    string.IsNullOrWhiteSpace(account.Currency) ? _defaultCompanyAccountCurrency : account.Currency);
+                    string.IsNullOrWhiteSpace(account.Currency) ? "VND" : account.Currency);
                 if (!id.EndsWith(currency, StringComparison.OrdinalIgnoreCase)) id += currency;
             }
 
@@ -226,13 +226,17 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
 
         private IntraCompanyAccount ResolveCompanyAccount(IntraCompanyAccount? account, string? fallbackCurrency = null)
         {
-            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
-                ? account.Identification.Trim()
-                : _companyAccount;
-
             var currency = !string.IsNullOrWhiteSpace(account?.Currency)
                 ? account.Currency.Trim()
-                : (!string.IsNullOrWhiteSpace(fallbackCurrency) ? fallbackCurrency.Trim() : _defaultCompanyAccountCurrency);
+                : (!string.IsNullOrWhiteSpace(fallbackCurrency) ? fallbackCurrency.Trim() : "VND");
+
+            var defaultAccount = string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase)
+                ? _companyUsdAccount
+                : _companyVndAccount;
+
+            var accountId = !string.IsNullOrWhiteSpace(account?.Identification)
+                ? account.Identification.Trim()
+                : defaultAccount;
 
             return new IntraCompanyAccount
             {
@@ -340,6 +344,14 @@ namespace BNPPIntegration.BNPP.Payments.IntraCompany
             var value = configuration[key];
             return string.IsNullOrWhiteSpace(value)
                 ? throw new InvalidOperationException($"{key} is required.")
+                : value.Trim();
+        }
+
+        private static string RequiredConfiguration(IConfiguration configuration, string primaryKey, string fallbackKey)
+        {
+            var value = configuration[primaryKey] ?? configuration[fallbackKey];
+            return string.IsNullOrWhiteSpace(value)
+                ? throw new InvalidOperationException($"{primaryKey} is required.")
                 : value.Trim();
         }
 
