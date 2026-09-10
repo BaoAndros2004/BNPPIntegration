@@ -83,13 +83,10 @@ namespace BNPPIntegration.BNPP.BankReports.PSR
                 return null;
             }
 
-            var isIban = account.Type.Equals("IBAN", StringComparison.OrdinalIgnoreCase);
             return new PSRAccountIdentification
             {
-                Type = isIban ? "IBAN" : "Other",
-                Value = isIban
-                    ? new string(account.Value.Where(character => !char.IsWhiteSpace(character)).ToArray()).ToUpperInvariant()
-                    : account.Value.Trim()
+                Type = "Other",
+                Value = account.Value.Trim()
             };
         }
 

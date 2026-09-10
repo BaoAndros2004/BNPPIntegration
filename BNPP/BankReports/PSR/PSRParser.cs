@@ -269,27 +269,27 @@ namespace BNPPIntegration.BNPP.BankReports.PSR
                 return null;
             }
 
-            var iban = GetOptionalValue(identification, ns + "IBAN", $"{accountPath}/Id/IBAN", errors);
             var other = GetSingleElement(identification, ns + "Othr", $"{accountPath}/Id/Othr", false, errors);
             var otherId = other is null
                 ? null
                 : GetRequiredValue(other, ns + "Id", $"{accountPath}/Id/Othr/Id", errors);
 
-            if (iban is not null && otherId is not null)
+            if (otherId is null)
             {
-                errors.Add($"{accountPath}/Id must contain either IBAN or Othr, not both.");
+                // Fallback to any direct text if Othr is not present
+                otherId = identification.Value?.Trim();
             }
 
-            if (iban is null && otherId is null)
+            if (string.IsNullOrWhiteSpace(otherId))
             {
-                errors.Add($"{accountPath}/Id must contain an IBAN or other account identifier.");
+                errors.Add($"{accountPath}/Id must contain an account identifier.");
                 return null;
             }
 
             return new PSRAccountIdentification
             {
-                Type = iban is null ? "Other" : "IBAN",
-                Value = iban ?? otherId!
+                Type = "Other",
+                Value = otherId
             };
         }
 

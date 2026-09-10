@@ -63,8 +63,7 @@ namespace BNPPIntegration.BNPP.Payments.International
 
     public enum InternationalAccountIdentificationType
     {
-        Other = 0,
-        Iban = 1
+        Other = 0
     }
 }
 
